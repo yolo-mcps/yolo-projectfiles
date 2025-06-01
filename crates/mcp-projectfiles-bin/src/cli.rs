@@ -27,6 +27,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ShowCommands,
     },
+    /// Claude integration commands
+    Claude {
+        #[command(subcommand)]
+        command: ClaudeCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -37,4 +42,10 @@ pub enum ShowCommands {
         #[arg(long, default_value = "projectfiles")]
         name: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ClaudeCommands {
+    /// Register/unregister this MCP server with Claude
+    Register,
 }

@@ -20,3 +20,4 @@ target/
 
 ### Claude
 .claude/
+.mcp.json
