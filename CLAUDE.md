@@ -16,7 +16,6 @@ might have access to files outside the current project directory.
 - `cargo build` - Build all workspace crates
 - `cargo test` - Run all tests across the workspace
 - `cargo run --bin mcp-projectfiles -- stdio` - Run the server with stdio transport
-- `cargo run --bin mcp-projectfiles -- sse --port 3000` - Run the server with SSE transport
 
 ### Installation and Development Tasks
 
@@ -26,7 +25,6 @@ might have access to files outside the current project directory.
 ### Testing with External Tools
 
 - `mcp-discovery stdio -- cargo run --bin mcp-projectfiles -- stdio` - Test stdio transport with mcp-discovery
-- `mcp-discovery sse http://localhost:3000` - Test SSE transport with mcp-discovery
 
 ### Environment Variables
 
@@ -35,7 +33,7 @@ might have access to files outside the current project directory.
 
 ## Architecture Overview
 
-This is a Rust workspace implementing an MCP (Model Context Protocol) server with multiple transport support.
+This is a Rust workspace implementing an MCP (Model Context Protocol) server with stdio transport support.
 
 ### Workspace Structure
 
@@ -48,8 +46,7 @@ This is a Rust workspace implementing an MCP (Model Context Protocol) server wit
 #### Transport Layer (`crates/mcp-projectfiles-core/src/transports/`)
 
 - **StdioHandler** - Handles stdin/stdout communication
-- **SseHandler** - Handles Server-Sent Events over HTTP
-- Both transports use the same `CoreHandler` for business logic
+- Uses the `CoreHandler` for business logic
 
 #### Core Handler (`crates/mcp-projectfiles-core/src/handler.rs`)
 
@@ -71,7 +68,7 @@ This is a Rust workspace implementing an MCP (Model Context Protocol) server wit
 
 ### Key Design Patterns
 
-1. **Transport Abstraction** - Core handler is transport-agnostic, allowing easy addition of new transports
+1. **Transport Abstraction** - Core handler is transport-agnostic
 2. **Tool Trait System** - Tools implement either stateless or `StatefulTool` traits
 3. **Shared Context** - Stateful tools share a common context for data persistence
 4. **Logging Strategy** - TTY-aware logging (colored for terminals, plain text for files/pipes) with all logs to stderr
@@ -87,4 +84,4 @@ To add a new tool:
 
 ### Binary Entry Point
 
-The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI parsing and delegates to the appropriate transport server function.
+The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI parsing and delegates to the stdio transport server function.

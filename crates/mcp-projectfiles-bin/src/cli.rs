@@ -20,20 +20,6 @@ pub enum Commands {
         #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         version: String,
     },
-    /// Run the MCP server using SSE transport
-    Sse {
-        /// Server name
-        #[arg(long, default_value = "projectfiles")]
-        name: String,
-
-        /// Server version
-        #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
-        version: String,
-
-        /// Port to listen on
-        #[arg(short, long, default_value = "3000")]
-        port: u16,
-    },
     /// Test the tool handler implementation
     Test,
     /// Show various MCP server components
