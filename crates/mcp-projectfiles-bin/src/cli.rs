@@ -48,4 +48,6 @@ pub enum ShowCommands {
 pub enum ClaudeCommands {
     /// Register/unregister this MCP server with Claude
     Register,
+    /// Show Claude integration status
+    Status,
 }
