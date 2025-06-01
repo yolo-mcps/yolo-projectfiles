@@ -1,0 +1,22 @@
+[package]
+name = "mcp-projectfiles-bin"
+description = "Mcp Projectfiles: Bin"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "mcp-projectfiles"
+path = "src/main.rs"
+
+[dependencies]
+mcp-projectfiles-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+rust-mcp-schema.workspace = true

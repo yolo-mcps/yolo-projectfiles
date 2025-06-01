@@ -1,0 +1,12 @@
+[package]
+name = "mcp-projectfiles-xtask"
+description = "Mcp Projectfiles: xtask"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
