@@ -5,15 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Shared context for stateful tools containing common resources and custom state
+/// Shared context for stateful tools containing custom state
 #[derive(Clone)]
 pub struct ToolContext {
-    /// In-memory cache for storing key-value pairs
-    pub cache: Arc<Mutex<HashMap<String, String>>>,
-
-    /// Counter for demonstration purposes
-    pub counter: Arc<Mutex<i32>>,
-
     /// Custom state bag for storing arbitrary typed data
     /// Use TypeId as key for type-safe retrieval
     pub custom_state: Arc<Mutex<HashMap<std::any::TypeId, Box<dyn Any + Send + Sync>>>>,
@@ -23,8 +17,6 @@ impl ToolContext {
     /// Create a new tool context with default values
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
-            counter: Arc::new(Mutex::new(0)),
             custom_state: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -75,23 +67,6 @@ impl ToolContextBuilder {
         }
     }
 
-    /// Set initial counter value
-    pub async fn with_counter(self, initial_value: i32) -> Self {
-        {
-            let mut counter = self.context.counter.lock().await;
-            *counter = initial_value;
-        }
-        self
-    }
-
-    /// Add initial cache entries
-    pub async fn with_cache_entries(self, entries: HashMap<String, String>) -> Self {
-        {
-            let mut cache = self.context.cache.lock().await;
-            cache.extend(entries);
-        }
-        self
-    }
 
     /// Add custom typed state
     pub async fn with_custom_state<T: 'static + Send + Sync>(self, value: T) -> Self {

@@ -1,31 +1,18 @@
-mod calculator;
-mod counter;
-mod file;
-mod system;
-mod time;
+mod list;
+mod read;
+mod write;
 
 use rust_mcp_sdk::tool_box;
 
-pub use calculator::CalculatorTool;
-pub use counter::{CacheGetTool, CacheSetTool, CounterGetTool, CounterIncrementTool};
-pub use file::{FileListTool, FileReadTool, FileWriteTool};
-pub use system::{EnvironmentTool, SystemInfoTool};
-pub use time::{CurrentTimeTool, TimestampTool};
+pub use list::ListTool;
+pub use read::ReadTool;
+pub use write::WriteTool;
 
 tool_box!(
     ProtocolTools,
     [
-        CalculatorTool,
-        CounterIncrementTool,
-        CounterGetTool,
-        CacheSetTool,
-        CacheGetTool,
-        FileReadTool,
-        FileWriteTool,
-        FileListTool,
-        SystemInfoTool,
-        EnvironmentTool,
-        CurrentTimeTool,
-        TimestampTool
+        ReadTool,
+        WriteTool,
+        ListTool
     ]
 );

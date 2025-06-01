@@ -63,25 +63,12 @@ impl CoreHandler {
 
         info!(tool_name, "Executing tool");
         let result = match tool {
-            // Stateless tools - call directly
-            ProtocolTools::CalculatorTool(calc) => calc.call().await,
-            ProtocolTools::FileReadTool(file_read) => file_read.call().await,
-            ProtocolTools::FileWriteTool(file_write) => file_write.call().await,
-            ProtocolTools::FileListTool(file_list) => file_list.call().await,
-            ProtocolTools::SystemInfoTool(system_info) => system_info.call().await,
-            ProtocolTools::EnvironmentTool(env_tool) => env_tool.call().await,
-            ProtocolTools::CurrentTimeTool(time_tool) => time_tool.call().await,
-            ProtocolTools::TimestampTool(timestamp) => timestamp.call().await,
-
-            // Stateful tools - call with context
-            ProtocolTools::CounterIncrementTool(counter) => {
-                counter.call_with_context(&self.context).await
-            }
-            ProtocolTools::CounterGetTool(counter) => {
-                counter.call_with_context(&self.context).await
-            }
-            ProtocolTools::CacheSetTool(cache) => cache.call_with_context(&self.context).await,
-            ProtocolTools::CacheGetTool(cache) => cache.call_with_context(&self.context).await,
+            // Stateful file tools - call with context
+            ProtocolTools::ReadTool(read) => read.call_with_context(&self.context).await,
+            ProtocolTools::WriteTool(write) => write.call_with_context(&self.context).await,
+            
+            // Stateless file tools - call directly
+            ProtocolTools::ListTool(list) => list.call().await,
         };
 
         match &result {
@@ -117,7 +104,7 @@ pub fn create_server_details() -> InitializeResult {
             name: "projectfiles".to_string(),
             version: "0.1.0".to_string(),
         },
-        instructions: Some("MCP Server with tools support".to_string()),
+        instructions: Some("MCP Server for file operations within project directory".to_string()),
         meta: None,
     }
 }
@@ -126,7 +113,7 @@ pub fn create_server_details() -> InitializeResult {
 pub async fn test_handler() -> anyhow::Result<()> {
     use crate::tools::ProtocolTools;
 
-    tracing::info!("Testing tool handler implementation");
+    tracing::info!("Testing file operations handler implementation");
 
     tracing::info!("Testing tool handler...");
     tracing::info!("Testing list_tools...");
@@ -143,166 +130,37 @@ pub async fn test_handler() -> anyhow::Result<()> {
         );
     }
 
-    // Test calculator tool directly
-    tracing::info!("Testing calculator tool...");
-    let calc_tool = crate::tools::CalculatorTool {
-        expression: "2 + 2".to_string(),
+    // Test file list tool directly
+    tracing::info!("Testing file list tool...");
+    let file_list_tool = crate::tools::ListTool {
+        path: ".".to_string(),
     };
 
-    match calc_tool.call().await {
-        Ok(result) => {
-            if let Some(content) = result.content.first() {
-                match content {
-                    rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
-                        tracing::info!(
-                            "✅ calculator tool successful: 2 + 2 = {}",
-                            text.text.trim()
-                        );
-                    }
-                    _ => {
-                        tracing::info!("✅ calculator tool successful (non-text result)");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("❌ calculator tool failed: {}", e);
-            return Err(anyhow::anyhow!("calculator test failed"));
-        }
-    }
-
-    // Test system_info tool directly
-    tracing::info!("Testing system_info tool...");
-    let sys_tool = crate::tools::SystemInfoTool {};
-
-    match sys_tool.call().await {
+    match file_list_tool.call().await {
         Ok(result) => {
             if let Some(content) = result.content.first() {
                 match content {
                     rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
                         let lines: Vec<&str> = text.text.lines().collect();
-                        if let Some(first_line) = lines.first() {
-                            tracing::info!("✅ system_info tool successful: {}", first_line);
-                        }
-                    }
-                    _ => {
-                        tracing::info!("✅ system_info tool successful (non-text result)");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("❌ system_info tool failed: {}", e);
-            return Err(anyhow::anyhow!("system_info test failed"));
-        }
-    }
-
-    // Test stateful tools
-    tracing::info!("Testing stateful tools...");
-    let handler = CoreHandler::new();
-
-    // Test counter increment
-    tracing::info!("Testing counter increment tool...");
-    let counter_tool = crate::tools::CounterIncrementTool { increment: Some(5) };
-
-    match counter_tool.call_with_context(handler.context()).await {
-        Ok(result) => {
-            if let Some(content) = result.content.first() {
-                match content {
-                    rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
                         tracing::info!(
-                            "✅ counter increment tool successful: {}",
-                            text.text.trim()
+                            "✅ file list tool successful: {} entries found",
+                            lines.len()
                         );
                     }
                     _ => {
-                        tracing::info!("✅ counter increment tool successful (non-text result)");
+                        tracing::info!("✅ file list tool successful (non-text result)");
                     }
                 }
             }
         }
         Err(e) => {
-            tracing::error!("❌ counter increment tool failed: {}", e);
-            return Err(anyhow::anyhow!("counter increment test failed"));
-        }
-    }
-
-    // Test counter get to verify state persisted
-    tracing::info!("Testing counter get tool...");
-    let counter_get_tool = crate::tools::CounterGetTool {};
-
-    match counter_get_tool.call_with_context(handler.context()).await {
-        Ok(result) => {
-            if let Some(content) = result.content.first() {
-                match content {
-                    rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
-                        tracing::info!("✅ counter get tool successful: {}", text.text.trim());
-                    }
-                    _ => {
-                        tracing::info!("✅ counter get tool successful (non-text result)");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("❌ counter get tool failed: {}", e);
-            return Err(anyhow::anyhow!("counter get test failed"));
-        }
-    }
-
-    // Test cache set
-    tracing::info!("Testing cache set tool...");
-    let cache_set_tool = crate::tools::CacheSetTool {
-        key: "test_key".to_string(),
-        value: "test_value".to_string(),
-    };
-
-    match cache_set_tool.call_with_context(handler.context()).await {
-        Ok(result) => {
-            if let Some(content) = result.content.first() {
-                match content {
-                    rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
-                        tracing::info!("✅ cache set tool successful: {}", text.text.trim());
-                    }
-                    _ => {
-                        tracing::info!("✅ cache set tool successful (non-text result)");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("❌ cache set tool failed: {}", e);
-            return Err(anyhow::anyhow!("cache set test failed"));
-        }
-    }
-
-    // Test cache get to verify state persisted
-    tracing::info!("Testing cache get tool...");
-    let cache_get_tool = crate::tools::CacheGetTool {
-        key: "test_key".to_string(),
-    };
-
-    match cache_get_tool.call_with_context(handler.context()).await {
-        Ok(result) => {
-            if let Some(content) = result.content.first() {
-                match content {
-                    rust_mcp_schema::CallToolResultContentItem::TextContent(text) => {
-                        tracing::info!("✅ cache get tool successful: {}", text.text.trim());
-                    }
-                    _ => {
-                        tracing::info!("✅ cache get tool successful (non-text result)");
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("❌ cache get tool failed: {}", e);
-            return Err(anyhow::anyhow!("cache get test failed"));
+            tracing::error!("❌ file list tool failed: {}", e);
+            return Err(anyhow::anyhow!("file list test failed"));
         }
     }
 
     tracing::info!(
-        "🎉 All tool tests passed! Both stateful and stateless tools are working correctly."
+        "🎉 File operation tests passed! File tools are working correctly."
     );
     Ok(())
 }
