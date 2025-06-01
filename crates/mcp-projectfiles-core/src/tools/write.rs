@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-#[mcp_tool(name = "write", description = "Writes content to a text file within the project directory. File must have been previously read.")]
+#[mcp_tool(name = "write", description = "Writes content to files within the project directory only. IMPORTANT: Existing files must be read first using the read tool. Creates parent directories automatically if needed. Overwrites entire file content.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WriteTool {
     /// Path to the file to write (relative to project root)
@@ -34,11 +34,40 @@ impl StatefulTool for WriteTool {
             current_dir.join(requested_path)
         };
         
+        // For existing files, canonicalize the path
+        // For new files, canonicalize the parent directory and ensure the full path is within bounds
         let canonical_path = if absolute_path.exists() {
             absolute_path.canonicalize()
                 .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?
         } else {
-            absolute_path
+            // For new files, canonicalize the parent directory
+            if let Some(parent) = absolute_path.parent() {
+                let canonical_parent = parent.canonicalize()
+                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve parent directory: {}", e)))?;
+                
+                // Ensure the parent is within the project directory
+                if !canonical_parent.starts_with(&current_dir) {
+                    return Err(CallToolError::unknown_tool(format!(
+                        "Access denied: Path '{}' is outside the project directory",
+                        self.path
+                    )));
+                }
+                
+                // Reconstruct the path with the canonical parent
+                if let Some(file_name) = absolute_path.file_name() {
+                    canonical_parent.join(file_name)
+                } else {
+                    return Err(CallToolError::unknown_tool(format!(
+                        "Invalid file path: '{}'",
+                        self.path
+                    )));
+                }
+            } else {
+                return Err(CallToolError::unknown_tool(format!(
+                    "Invalid file path: '{}'",
+                    self.path
+                )));
+            }
         };
         
         if !canonical_path.starts_with(&current_dir) {

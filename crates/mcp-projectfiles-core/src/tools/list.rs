@@ -8,7 +8,7 @@ use tokio::fs;
 
 #[mcp_tool(
     name = "list",
-    description = "Lists files and directories in a given path"
+    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Provides a clean, structured view of the directory."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ListTool {
@@ -18,14 +18,27 @@ pub struct ListTool {
 
 impl ListTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let path = Path::new(&self.path);
-
-        if !path.exists() {
+        let current_dir = std::env::current_dir()
+            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+        
+        let requested_path = Path::new(&self.path);
+        let absolute_path = if requested_path.is_absolute() {
+            requested_path.to_path_buf()
+        } else {
+            current_dir.join(requested_path)
+        };
+        
+        let canonical_path = absolute_path.canonicalize()
+            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?;
+        
+        if !canonical_path.starts_with(&current_dir) {
             return Err(CallToolError::unknown_tool(format!(
-                "Path not found: {}",
+                "Access denied: Path '{}' is outside the project directory",
                 self.path
             )));
         }
+        
+        let path = &canonical_path;
 
         if !path.is_dir() {
             return Err(CallToolError::unknown_tool(format!(

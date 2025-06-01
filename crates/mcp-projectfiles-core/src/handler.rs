@@ -66,9 +66,16 @@ impl CoreHandler {
             // Stateful file tools - call with context
             ProtocolTools::ReadTool(read) => read.call_with_context(&self.context).await,
             ProtocolTools::WriteTool(write) => write.call_with_context(&self.context).await,
+            ProtocolTools::EditTool(edit) => edit.call_with_context(&self.context).await,
+            ProtocolTools::MoveTool(move_tool) => move_tool.call_with_context(&self.context).await,
+            ProtocolTools::CopyTool(copy) => copy.call_with_context(&self.context).await,
+            ProtocolTools::DeleteTool(delete) => delete.call_with_context(&self.context).await,
             
             // Stateless file tools - call directly
             ProtocolTools::ListTool(list) => list.call().await,
+            ProtocolTools::MkdirTool(mkdir) => mkdir.call().await,
+            ProtocolTools::TouchTool(touch) => touch.call().await,
+            ProtocolTools::ChmodTool(chmod) => chmod.call().await,
         };
 
         match &result {

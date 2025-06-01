@@ -50,4 +50,8 @@ pub enum ClaudeCommands {
     Register,
     /// Show Claude integration status
     Status,
+    /// Manage tool permissions for Claude
+    Permissions,
+    /// Configure Claude integration (TUI)
+    Configure,
 }
