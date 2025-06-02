@@ -19,6 +19,10 @@ pub enum Commands {
         /// Server version
         #[arg(long, default_value = env!("CARGO_PKG_VERSION"))]
         version: String,
+
+        /// Project root directory (defaults to current working directory)
+        #[arg(long, env = "MCP_PROJECT_ROOT")]
+        project_root: Option<std::path::PathBuf>,
     },
     /// Test the tool handler implementation
     Test,

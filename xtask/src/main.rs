@@ -3,8 +3,6 @@ use std::process;
 use anyhow::Result;
 use clap::{ArgMatches, Command};
 
-const SERVICE_NAME: &str = "mcp-projectfiles";
-
 fn main() -> Result<()> {
     let args = clap::command!()
         .subcommand_required(true)

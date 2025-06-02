@@ -5,6 +5,7 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
+use glob::{glob_with, MatchOptions};
 
 #[mcp_tool(
     name = "chmod", 
@@ -19,6 +20,9 @@ pub struct ChmodTool {
     /// Whether to apply permissions recursively to directories (default: false)
     #[serde(default)]
     pub recursive: bool,
+    /// Pattern matching mode - treat path as a glob pattern for bulk operations (default: false)
+    #[serde(default)]
+    pub pattern: bool,
 }
 
 impl ChmodTool {
@@ -38,6 +42,90 @@ impl ChmodTool {
             let current_dir = std::env::current_dir()
                 .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
             
+            if self.pattern {
+                // Pattern matching mode - treat path as glob pattern
+                let pattern_path = if Path::new(&self.path).is_absolute() {
+                    self.path.clone()
+                } else {
+                    format!("{}/{}", current_dir.display(), self.path)
+                };
+                
+                let options = MatchOptions {
+                    case_sensitive: true,
+                    require_literal_separator: false,
+                    require_literal_leading_dot: false,
+                };
+                
+                let paths: Vec<_> = glob_with(&pattern_path, options)
+                    .map_err(|e| CallToolError::unknown_tool(format!("Invalid pattern '{}': {}", self.path, e)))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to expand pattern: {}", e)))?;
+                
+                if paths.is_empty() {
+                    return Err(CallToolError::unknown_tool(format!(
+                        "No files found matching pattern: {}",
+                        self.path
+                    )));
+                }
+                
+                // Parse the mode
+                let mode = u32::from_str_radix(&self.mode, 8)
+                    .map_err(|_| CallToolError::unknown_tool(format!(
+                        "Invalid mode '{}'. Must be an octal number like '755' or '644'",
+                        self.mode
+                    )))?;
+                
+                let mut changed_paths = Vec::new();
+                let mut _total_changed = 0;
+                
+                for path in paths {
+                    // Security check: ensure path is within project directory
+                    let canonical_path = path.canonicalize()
+                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", path.display(), e)))?;
+                    
+                    if !canonical_path.starts_with(&current_dir) {
+                        continue; // Skip paths outside project directory
+                    }
+                    
+                    // Apply chmod
+                    let metadata = fs::metadata(&canonical_path).await
+                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata for '{}': {}", path.display(), e)))?;
+                    
+                    let changed_count = if metadata.is_file() || (metadata.is_dir() && !self.recursive) {
+                        let permissions = std::fs::Permissions::from_mode(mode);
+                        fs::set_permissions(&canonical_path, permissions).await
+                            .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions for '{}': {}", path.display(), e)))?;
+                        1
+                    } else if metadata.is_dir() && self.recursive {
+                        chmod_recursive(&canonical_path, mode).await?
+                    } else {
+                        0
+                    };
+                    
+                    if changed_count > 0 {
+                        changed_paths.push(path.display().to_string());
+                        _total_changed += changed_count;
+                    }
+                }
+                
+                let summary = format!(
+                    "Successfully changed permissions for {} {} matching pattern '{}':\n{}",
+                    changed_paths.len(),
+                    if changed_paths.len() == 1 { "path" } else { "paths" },
+                    self.path,
+                    changed_paths.join("\n")
+                );
+                
+                return Ok(CallToolResult {
+                    content: vec![CallToolResultContentItem::TextContent(TextContent::new(
+                        summary, None,
+                    ))],
+                    is_error: None,
+                    meta: None,
+                });
+            }
+            
+            // Single path mode (existing logic)
             let requested_path = Path::new(&self.path);
             let absolute_path = if requested_path.is_absolute() {
                 requested_path.to_path_buf()

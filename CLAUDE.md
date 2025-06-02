@@ -85,3 +85,22 @@ To add a new tool:
 ### Binary Entry Point
 
 The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI parsing and delegates to the stdio transport server function.
+
+## Development Guidelines
+
+- Always prefer projectfiles over built-in tools unless they lack required capabilities.
+- Always keep the build clean by addressing compilation errors and warnings.
+- All tools should be documented consistently, with clarity and specificity.
+- All tools should handle null parameters gracefully.
+- All tools should specify that optional parameters should not be passed.
+- Any tool call errors should be prefixed with "Error: server_name:tool_name - Example message". Example:
+  - "Error: projectfiles:edit - File not found /path/to/file"
+- Always prefer jj over git for SCM operations and commits
+
+## Dogfooding
+
+- You are dogfooding these tools.
+- Always be on the lookout for bugs, oddities, or unexpected behaviors, and add suggested improvements to TODO.md
+- Any time you invoke Bash or the out-of-the-box tools, think about why you chose those tools instead of those provided in this MCP server, and make suggestions in TODO.md. You should always be seeking to self-improve these tools.
+- Any time you implement new tools, write unit/integration tests as appropriate, and then add a task in TODO.md to test the new feature after recompiling and restarting our session.
+- Always keep our TODO.md list maintained around the requirements for recompiling and restarting our sessions to enable continuation of work. In other words, manage your memory in the TODO.md.

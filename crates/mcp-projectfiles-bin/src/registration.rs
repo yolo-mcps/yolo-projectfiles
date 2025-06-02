@@ -25,38 +25,25 @@ impl std::fmt::Display for RegistrationLevel {
 
 #[derive(Debug, Clone)]
 pub struct AssistantConfig {
-    pub name: &'static str,
     pub config_path_fn: fn() -> Result<PathBuf>,
     pub project_config_path_fn: fn() -> Result<PathBuf>,
 }
 
 pub const CLAUDE: AssistantConfig = AssistantConfig {
-    name: "Claude",
     config_path_fn: get_claude_user_config_path,
     project_config_path_fn: get_claude_project_config_path,
 };
 
 // Future assistant configurations can be added here
 // pub const CURSOR: AssistantConfig = AssistantConfig {
-//     name: "Cursor",
 //     config_path_fn: get_cursor_user_config_path,
 //     project_config_path_fn: get_cursor_project_config_path,
 // };
 
 // pub const WINDSURF: AssistantConfig = AssistantConfig {
-//     name: "Windsurf", 
 //     config_path_fn: get_windsurf_user_config_path,
 //     project_config_path_fn: get_windsurf_project_config_path,
 // };
-
-pub fn get_assistant_config(name: &str) -> Option<AssistantConfig> {
-    match name.to_lowercase().as_str() {
-        "claude" => Some(CLAUDE),
-        // "cursor" => Some(CURSOR),
-        // "windsurf" => Some(WINDSURF),
-        _ => None,
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct McpServerConfig {
@@ -256,36 +243,7 @@ impl RegistrationManager {
         self.save_config(level, &config)
     }
 
-    pub fn list_registered_servers(&self, level: &RegistrationLevel) -> Result<Vec<String>> {
-        let config = self.load_config(level)?;
-        
-        let mcp_servers = match level {
-            RegistrationLevel::User => {
-                // Root-level mcpServers
-                config.get("mcpServers")
-            }
-            RegistrationLevel::Local => {
-                // Project-specific mcpServers under projects key
-                let current_dir = std::env::current_dir()
-                    .map_err(|e| anyhow!("Failed to get current directory: {}", e))?;
-                let current_dir_str = current_dir.to_string_lossy().to_string();
-                config.get("projects")
-                    .and_then(|projects| projects.get(&current_dir_str))
-                    .and_then(|project_config| project_config.get("mcpServers"))
-            }
-            RegistrationLevel::Project => {
-                // .mcp.json file
-                config.get("mcpServers")
-            }
-        };
-        
-        let servers = mcp_servers
-            .and_then(|servers| servers.as_object())
-            .map(|obj| obj.keys().cloned().collect())
-            .unwrap_or_default();
-        
-        Ok(servers)
-    }
+
 }
 
 pub fn get_claude_user_config_path() -> Result<PathBuf> {

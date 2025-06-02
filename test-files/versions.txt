@@ -1,0 +1,5 @@
+Project version: v1.2.3-beta
+Library A: v2.0.1-beta
+Library B: v3.5.7-beta
+API version: v1.0.0-beta
+Build version: v4.2.1-beta

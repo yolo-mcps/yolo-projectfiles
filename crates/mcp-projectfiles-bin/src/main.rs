@@ -30,7 +30,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Stdio { name: _, version: _ } => {
+        Commands::Stdio { name: _, version: _, project_root } => {
+            // Initialize project root if provided
+            if let Some(root) = project_root {
+                info!("Setting project root to: {:?}", root);
+                mcp_projectfiles_core::config::init_project_root(root);
+            }
             info!("Starting MCP server with stdio transport");
             mcp_projectfiles_core::run_stdio_server().await
         }

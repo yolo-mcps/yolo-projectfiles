@@ -22,6 +22,13 @@ pub struct MoveTool {
     /// Whether to overwrite existing files (default: false)
     #[serde(default)]
     pub overwrite: bool,
+    /// Whether to preserve file metadata (timestamps, permissions) (default: true)
+    #[serde(default = "default_true")]
+    pub preserve_metadata: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[async_trait]
@@ -100,10 +107,39 @@ impl StatefulTool for MoveTool {
                 .map_err(|e| CallToolError::unknown_tool(format!("Failed to create parent directory: {}", e)))?;
         }
         
+        // Get metadata before move if preservation is requested
+        let metadata = if self.preserve_metadata {
+            Some(fs::metadata(&canonical_source).await
+                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read source metadata: {}", e)))?)
+        } else {
+            None
+        };
+        
         // Perform the move
         fs::rename(&canonical_source, &canonical_dest)
             .await
             .map_err(|e| CallToolError::unknown_tool(format!("Failed to move file: {}", e)))?;
+        
+        // Restore metadata if requested and available
+        if let Some(meta) = metadata {
+            // Set file times (modified and accessed)
+            if let Ok(modified) = meta.modified() {
+                let _ = filetime::set_file_mtime(&canonical_dest, 
+                    filetime::FileTime::from_system_time(modified));
+            }
+            if let Ok(accessed) = meta.accessed() {
+                let _ = filetime::set_file_atime(&canonical_dest, 
+                    filetime::FileTime::from_system_time(accessed));
+            }
+            
+            // Set permissions on Unix-like systems
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&canonical_dest, 
+                    std::fs::Permissions::from_mode(meta.permissions().mode())).await;
+            }
+        }
         
         // Update tracking in context
         // Remove source from read/written files

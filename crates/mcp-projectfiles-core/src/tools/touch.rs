@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
 use std::time::SystemTime;
+use chrono::DateTime;
+use filetime::{set_file_times, FileTime};
 
 #[mcp_tool(
     name = "touch", 
@@ -24,6 +26,18 @@ pub struct TouchTool {
     /// Whether to update modification time (default: true)
     #[serde(default = "default_update_mtime")]
     pub update_mtime: bool,
+    /// Specific access time to set (ISO 8601 format: "2023-12-25T10:30:00Z")
+    /// If not provided, current time is used when update_atime is true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub atime: Option<String>,
+    /// Specific modification time to set (ISO 8601 format: "2023-12-25T10:30:00Z")
+    /// If not provided, current time is used when update_mtime is true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<String>,
+    /// Reference file to copy timestamps from (relative to project root)
+    /// If provided, timestamps are copied from this file instead of using atime/mtime
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 fn default_create() -> bool {
@@ -135,29 +149,82 @@ impl TouchTool {
                     self.path
                 )));
             }
+        }
+
+        // Update timestamps (for both existing and newly created files)
+        if self.update_atime || self.update_mtime {
+            let metadata = fs::metadata(&absolute_path)
+                .await
+                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
             
-            // Update timestamps
-            if self.update_atime || self.update_mtime {
-                let file = fs::OpenOptions::new()
-                    .write(true)
-                    .open(&absolute_path)
-                    .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to open file: {}", e)))?;
+            let current_atime = FileTime::from_last_access_time(&metadata);
+            let current_mtime = FileTime::from_last_modification_time(&metadata);
+            
+            // Handle reference file if provided
+            let (ref_atime, ref_mtime) = if let Some(ref reference_path) = self.reference {
+                let ref_absolute_path = if Path::new(reference_path).is_absolute() {
+                    Path::new(reference_path).to_path_buf()
+                } else {
+                    current_dir.join(reference_path)
+                };
                 
-                let _now = SystemTime::now();
+                let ref_canonical_path = ref_absolute_path.canonicalize()
+                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve reference path '{}': {}", reference_path, e)))?;
                 
-                // Note: Rust's standard library doesn't provide direct access time updates
-                // Setting modified time will typically update both on most systems
-                if self.update_mtime {
-                    // Update file modification time by opening and closing it
-                    drop(file);
-                    // Touch the file by writing nothing
-                    let _ = fs::OpenOptions::new()
-                        .append(true)
-                        .open(&absolute_path)
-                        .await;
+                if !ref_canonical_path.starts_with(&current_dir) {
+                    return Err(CallToolError::unknown_tool(format!(
+                        "Access denied: Reference path '{}' is outside the project directory",
+                        reference_path
+                    )));
                 }
                 
+                if !ref_canonical_path.exists() {
+                    return Err(CallToolError::unknown_tool(format!(
+                        "Reference file not found: {}",
+                        reference_path
+                    )));
+                }
+                
+                let ref_metadata = fs::metadata(&ref_canonical_path)
+                    .await
+                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to read reference file metadata: {}", e)))?;
+                
+                (
+                    FileTime::from_last_access_time(&ref_metadata),
+                    FileTime::from_last_modification_time(&ref_metadata)
+                )
+            } else {
+                (FileTime::now(), FileTime::now()) // Will be overridden by specific times if provided
+            };
+            
+            let new_atime = if self.update_atime {
+                if let Some(ref atime_str) = self.atime {
+                    self.parse_timestamp(atime_str, "access time")?
+                } else if self.reference.is_some() {
+                    ref_atime
+                } else {
+                    FileTime::now()
+                }
+            } else {
+                current_atime
+            };
+            
+            let new_mtime = if self.update_mtime {
+                if let Some(ref mtime_str) = self.mtime {
+                    self.parse_timestamp(mtime_str, "modification time")?
+                } else if self.reference.is_some() {
+                    ref_mtime
+                } else {
+                    FileTime::now()
+                }
+            } else {
+                current_mtime
+            };
+            
+            set_file_times(&absolute_path, new_atime, new_mtime)
+                .map_err(|e| CallToolError::unknown_tool(format!("Failed to set timestamps: {}", e)))?;
+            
+            if action != "created" {
                 action = "updated";
             }
         }
@@ -169,5 +236,17 @@ impl TouchTool {
             is_error: Some(false),
             meta: None,
         })
+    }
+
+    fn parse_timestamp(&self, timestamp_str: &str, field_name: &str) -> Result<FileTime, CallToolError> {
+        // Try to parse as ISO 8601 format
+        let dt = DateTime::parse_from_rfc3339(timestamp_str)
+            .map_err(|e| CallToolError::unknown_tool(format!(
+                "Invalid {} format '{}': {}. Expected ISO 8601 format like '2023-12-25T10:30:00Z'",
+                field_name, timestamp_str, e
+            )))?;
+        
+        let system_time: SystemTime = dt.into();
+        Ok(FileTime::from_system_time(system_time))
     }
 }

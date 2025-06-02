@@ -6,6 +6,21 @@ use rust_mcp_schema::{
 };
 use tracing::{debug, error, info, instrument};
 
+/// Custom error type for tool execution errors with proper naming
+#[derive(Debug)]
+struct ToolExecutionError {
+    tool_name: String,
+    message: String,
+}
+
+impl std::fmt::Display for ToolExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.tool_name, self.message)
+    }
+}
+
+impl std::error::Error for ToolExecutionError {}
+
 /// Core MCP server handler with transport-agnostic business logic
 pub struct CoreHandler {
     /// Shared context for stateful tools
@@ -70,13 +85,35 @@ impl CoreHandler {
             ProtocolTools::MoveTool(move_tool) => move_tool.call_with_context(&self.context).await,
             ProtocolTools::CopyTool(copy) => copy.call_with_context(&self.context).await,
             ProtocolTools::DeleteTool(delete) => delete.call_with_context(&self.context).await,
+            ProtocolTools::GrepTool(grep) => grep.call_with_context(&self.context).await,
             
             // Stateless file tools - call directly
             ProtocolTools::ListTool(list) => list.call().await,
             ProtocolTools::MkdirTool(mkdir) => mkdir.call().await,
             ProtocolTools::TouchTool(touch) => touch.call().await,
             ProtocolTools::ChmodTool(chmod) => chmod.call().await,
-        };
+            ProtocolTools::ExistsTool(exists) => exists.call().await,
+            ProtocolTools::StatTool(stat) => stat.call().await,
+            ProtocolTools::DiffTool(diff) => diff.call().await,
+            ProtocolTools::FindTool(find) => find.call().await,
+            ProtocolTools::TreeTool(tree) => tree.call().await,
+            ProtocolTools::FileTypeTool(file_type) => file_type.call().await,
+            ProtocolTools::WcTool(wc) => wc.call().await,
+            ProtocolTools::HashTool(hash) => hash.call().await,
+            ProtocolTools::ProcessTool(process) => process.call().await,
+        }.map_err(|e| {
+            // Improve error message by adding tool context when the error message doesn't already include it
+            let error_msg = e.to_string();
+            if !error_msg.starts_with(&format!("projectfiles:{}", tool_name)) && 
+               !error_msg.contains(&format!("Tool execution error in '{}'", tool_name)) {
+                CallToolError::new(ToolExecutionError {
+                    tool_name: format!("projectfiles:{}", tool_name),
+                    message: error_msg,
+                })
+            } else {
+                e
+            }
+        });
 
         match &result {
             Ok(_) => info!(tool_name, "Tool execution completed successfully"),
@@ -141,6 +178,11 @@ pub async fn test_handler() -> anyhow::Result<()> {
     tracing::info!("Testing file list tool...");
     let file_list_tool = crate::tools::ListTool {
         path: ".".to_string(),
+        recursive: false,
+        filter: None,
+        sort_by: "name".to_string(),
+        show_hidden: false,
+        show_metadata: false,
     };
 
     match file_list_tool.call().await {

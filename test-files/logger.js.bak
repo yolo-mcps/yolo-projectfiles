@@ -1,0 +1,20 @@
+function processData(data) {
+    console.info("Starting data processing");
+    console.debug("Input data:", data);
+    
+    if (!data) {
+        console.error("No data provided");
+        return;
+    }
+    
+    try {
+        logger.restricted("Beginning transformation");
+        const result = transform(data);
+        logger.restricted("Transformation successful");
+        return result;
+    } catch (e) {
+        console.error("Transformation failed:", e);
+        console.warn("Falling back to default");
+        return defaultValue;
+    }
+}
