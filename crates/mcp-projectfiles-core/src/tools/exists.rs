@@ -1,11 +1,12 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use async_trait::async_trait;
 use std::path::{Path, PathBuf, Component};
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
-use super::utils::get_project_root_validated;
 
 const TOOL_NAME: &str = "exists";
 
@@ -19,13 +20,22 @@ pub struct ExistsTool {
     pub path: String,
 }
 
-impl ExistsTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let project_root = get_project_root_validated()?;
+#[async_trait]
+impl StatefulTool for ExistsTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
-        // Use validate_path but don't require the path to exist
-        let absolute_path = crate::config::normalize_path(&self.path)
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &e)))?;
+        // Convert relative path to absolute path
+        let requested_path = Path::new(&self.path);
+        let absolute_path = if requested_path.is_absolute() {
+            requested_path.to_path_buf()
+        } else {
+            project_root.join(requested_path)
+        };
         
         // Note: We don't use canonicalize() here because it fails if the path doesn't exist
         // Instead, we normalize the path and check if it's within the project
@@ -91,5 +101,98 @@ fn normalize_path(path: &Path) -> PathBuf {
     }
     
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_exists_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test.txt"), "content").await.unwrap();
+        
+        let exists_tool = ExistsTool {
+            path: "test.txt".to_string(),
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("exists") && text.text.contains("file"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test directory
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir(project_root.join("test_dir")).await.unwrap();
+        
+        let exists_tool = ExistsTool {
+            path: "test_dir".to_string(),
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("exists") && text.text.contains("directory"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_nonexistent() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let exists_tool = ExistsTool {
+            path: "nonexistent.txt".to_string(),
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // The exists tool returns JSON with exists: false for non-existent files
+            assert!(text.text.contains("\"exists\": false") || text.text.contains("\"type\": \"none\""));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let exists_tool = ExistsTool {
+            path: "../outside.txt".to_string(),
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
 }
 

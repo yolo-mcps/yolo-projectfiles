@@ -92,18 +92,24 @@ impl CoreHandler {
             
             ProtocolTools::ListTool(list) => list.call_with_context(&self.context).await,
             
+            // Priority 1 StatefulTool implementations
+            ProtocolTools::MkdirTool(mkdir) => mkdir.call_with_context(&self.context).await,
+            ProtocolTools::TouchTool(touch) => touch.call_with_context(&self.context).await,
+            ProtocolTools::ChmodTool(chmod) => chmod.call_with_context(&self.context).await,
+            ProtocolTools::FindTool(find) => find.call_with_context(&self.context).await,
+            
+            // Priority 2 StatefulTool implementations
+            ProtocolTools::ExistsTool(exists) => exists.call_with_context(&self.context).await,
+            ProtocolTools::StatTool(stat) => stat.call_with_context(&self.context).await,
+            ProtocolTools::DiffTool(diff) => diff.call_with_context(&self.context).await,
+            ProtocolTools::FileTypeTool(file_type) => file_type.call_with_context(&self.context).await,
+            
+            // Priority 3 StatefulTool implementations
+            ProtocolTools::TreeTool(tree) => tree.call_with_context(&self.context).await,
+            ProtocolTools::WcTool(wc) => wc.call_with_context(&self.context).await,
+            ProtocolTools::HashTool(hash) => hash.call_with_context(&self.context).await,
+            
             // Stateless file tools - call directly
-            ProtocolTools::MkdirTool(mkdir) => mkdir.call().await,
-            ProtocolTools::TouchTool(touch) => touch.call().await,
-            ProtocolTools::ChmodTool(chmod) => chmod.call().await,
-            ProtocolTools::ExistsTool(exists) => exists.call().await,
-            ProtocolTools::StatTool(stat) => stat.call().await,
-            ProtocolTools::DiffTool(diff) => diff.call().await,
-            ProtocolTools::FindTool(find) => find.call().await,
-            ProtocolTools::TreeTool(tree) => tree.call().await,
-            ProtocolTools::FileTypeTool(file_type) => file_type.call().await,
-            ProtocolTools::WcTool(wc) => wc.call().await,
-            ProtocolTools::HashTool(hash) => hash.call().await,
             ProtocolTools::ProcessTool(process) => process.call().await,
         }.map_err(|e| {
             // Improve error message by adding tool context when the error message doesn't already include it

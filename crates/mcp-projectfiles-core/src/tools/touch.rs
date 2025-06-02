@@ -1,5 +1,7 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::format_path;
+use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -56,10 +58,18 @@ fn default_update_mtime() -> bool {
     true
 }
 
-impl TouchTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+#[async_trait]
+impl StatefulTool for TouchTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+            
+        // Canonicalize project root for consistent path comparison
+        let current_dir = project_root.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -257,7 +267,9 @@ impl TouchTool {
             meta: None,
         })
     }
+}
 
+impl TouchTool {
     fn parse_timestamp(&self, timestamp_str: &str, field_name: &str) -> Result<FileTime, CallToolError> {
         // Try to parse as ISO 8601 format
         let dt = DateTime::parse_from_rfc3339(timestamp_str)
@@ -268,5 +280,298 @@ impl TouchTool {
         
         let system_time: SystemTime = dt.into();
         Ok(FileTime::from_system_time(system_time))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    use std::time::SystemTime;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_touch_create_new_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "new_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file was created
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("new_file.txt");
+        assert!(file_path.exists());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Created") || text.text.contains("Touched"));
+            assert!(text.text.contains("new_file.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_existing_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create existing file
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("existing.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        // Get original timestamp
+        let original_metadata = fs::metadata(&file_path).await.unwrap();
+        let original_modified = original_metadata.modified().unwrap();
+        
+        // Wait a bit to ensure timestamp changes
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        let touch_tool = TouchTool {
+            path: "existing.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check timestamp was updated
+        let new_metadata = fs::metadata(&file_path).await.unwrap();
+        let new_modified = new_metadata.modified().unwrap();
+        assert!(new_modified >= original_modified);
+        
+        // Content should be unchanged
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "content");
+    }
+    
+    #[tokio::test]
+    async fn test_touch_no_create() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "nonexistent.txt".to_string(),
+            create: false,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
+        
+        // File should not be created
+        let project_root = context.get_project_root().unwrap();
+        assert!(!project_root.join("nonexistent.txt").exists());
+    }
+    
+    #[tokio::test]
+    async fn test_touch_with_specific_timestamps() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "timestamped.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: Some("2023-01-01T12:00:00Z".to_string()),
+            mtime: Some("2023-01-01T12:00:00Z".to_string()),
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file was created with specified timestamp
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("timestamped.txt");
+        assert!(file_path.exists());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("timestamped.txt"));
+            assert!(text.text.contains("2023-01-01") || text.text.contains("timestamp"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_with_reference_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create reference file
+        let project_root = context.get_project_root().unwrap();
+        let ref_path = project_root.join("reference.txt");
+        fs::write(&ref_path, "reference content").await.unwrap();
+        
+        let touch_tool = TouchTool {
+            path: "target.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: Some("reference.txt".to_string()),
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check target file was created
+        let target_path = project_root.join("target.txt");
+        assert!(target_path.exists());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("target.txt"));
+            // Just verify successful operation, don't check for specific reference mention
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_selective_timestamps() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create existing file
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("selective.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        // Update only modification time
+        let touch_tool = TouchTool {
+            path: "selective.txt".to_string(),
+            create: false,
+            update_atime: false,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("selective.txt"));
+            assert!(text.text.contains("Updated") || text.text.contains("Touched"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_with_parent_directories() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "subdir/nested/file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check parent directories and file were created
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("subdir/nested/file.txt");
+        assert!(file_path.exists());
+        assert!(project_root.join("subdir").is_dir());
+        assert!(project_root.join("subdir/nested").is_dir());
+    }
+    
+    #[tokio::test]
+    async fn test_touch_invalid_timestamp() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "invalid_time.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: Some("invalid-timestamp".to_string()),
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid") && error_msg.contains("format"));
+    }
+    
+    #[tokio::test]
+    async fn test_touch_outside_project_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "../outside.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[tokio::test]
+    async fn test_touch_invalid_reference_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "target.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: Some("nonexistent_ref.txt".to_string()),
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("reference") || error_msg.contains("not found"));
     }
 }

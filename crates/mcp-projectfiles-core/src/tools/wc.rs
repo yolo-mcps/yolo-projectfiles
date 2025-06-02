@@ -1,5 +1,7 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::{format_count, format_path};
+use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -39,11 +41,19 @@ fn default_true() -> bool {
     true
 }
 
-impl WcTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        // Get current directory and resolve path
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+#[async_trait]
+impl StatefulTool for WcTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        // Get project root and resolve path
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+            
+        // Canonicalize project root for consistent path comparison
+        let current_dir = project_root.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let target_path = current_dir.join(&self.path);
         
@@ -144,4 +154,417 @@ impl WcTool {
 
 fn count_words(text: &str) -> usize {
     text.split_whitespace().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+
+    async fn create_test_file(dir: &std::path::Path, name: &str, content: &str) -> std::path::PathBuf {
+        let file_path = dir.join(name);
+        fs::write(&file_path, content).await.expect("Failed to create test file");
+        file_path
+    }
+
+    #[tokio::test]
+    async fn test_wc_basic_count_all() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Hello world\nThis is a test\nThird line";
+        create_test_file(temp_dir.path(), "test.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "test.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        assert_eq!(output.is_error, Some(false));
+        
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+
+            // Should contain all count types
+            assert!(content.contains("3 lines")); // 3 lines
+            assert!(content.contains("words")); // Check word counting works
+            assert!(content.contains("characters")); 
+            assert!(content.contains("bytes"));
+            assert!(content.contains("test.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_lines_only() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Line 1\nLine 2\nLine 3\n";
+        create_test_file(temp_dir.path(), "lines.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "lines.txt".to_string(),
+            count_lines: true,
+            count_words: false,
+            count_chars: false,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should only contain line count
+            assert!(content.contains("3 lines"));
+            assert!(!content.contains("Words:"));
+            assert!(!content.contains("Characters:"));
+            assert!(!content.contains("Bytes:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_words_only() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "one two three four five";
+        create_test_file(temp_dir.path(), "words.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "words.txt".to_string(),
+            count_lines: false,
+            count_words: true,
+            count_chars: false,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should only contain word count
+            assert!(content.contains("5 words"));
+            assert!(!content.contains("Lines:"));
+            assert!(!content.contains("Characters:"));
+            assert!(!content.contains("Bytes:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_characters_only() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Hello!"; // 6 characters
+        create_test_file(temp_dir.path(), "chars.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "chars.txt".to_string(),
+            count_lines: false,
+            count_words: false,
+            count_chars: true,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should only contain character count
+            assert!(content.contains("6 characters"));
+            assert!(!content.contains("Lines:"));
+            assert!(!content.contains("Words:"));
+            assert!(!content.contains("Bytes:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_bytes_only() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Test"; // 4 bytes in UTF-8
+        create_test_file(temp_dir.path(), "bytes.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "bytes.txt".to_string(),
+            count_lines: false,
+            count_words: false,
+            count_chars: false,
+            count_bytes: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should only contain byte count
+            assert!(content.contains("4 bytes"));
+            assert!(!content.contains("Lines:"));
+            assert!(!content.contains("Words:"));
+            assert!(!content.contains("Characters:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_empty_file() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(temp_dir.path(), "empty.txt", "").await;
+        
+        let wc_tool = WcTool {
+            path: "empty.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should show all zeros
+            assert!(content.contains("0 lines"));
+            assert!(content.contains("0 words"));
+            assert!(content.contains("0 characters"));
+            assert!(content.contains("0 bytes"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_single_line_no_newline() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Single line without newline";
+        create_test_file(temp_dir.path(), "single.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "single.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+
+            // Single line without newline should count as 1 line (lines() behavior)
+            assert!(content.contains("1 line")); // singular form
+            assert!(content.contains("4 words"));
+            assert!(content.contains("characters"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_multiple_whitespace() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "word1    word2\t\tword3\n\n\nword4";
+        create_test_file(temp_dir.path(), "whitespace.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "whitespace.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: false,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should handle whitespace correctly
+            assert!(content.contains("4 lines")); // 4 lines due to newlines
+            assert!(content.contains("4 words")); // split_whitespace should find 4 words
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_unicode_characters() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Hello 世界 🌍"; // Mix of ASCII, Chinese, and emoji
+        create_test_file(temp_dir.path(), "unicode.txt", content).await;
+        
+        let wc_tool = WcTool {
+            path: "unicode.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+
+            // Unicode should be counted correctly
+            assert!(content.contains("1 line"));
+            assert!(content.contains("3 words")); // "Hello", "世界", "🌍"
+            assert!(content.contains("characters")); // Count Unicode characters correctly
+            // Bytes should be more than characters due to UTF-8 encoding
+            assert!(content.contains("bytes"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_file_not_found() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let wc_tool = WcTool {
+            path: "nonexistent.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("projectfiles:wc"));
+        assert!(error.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_directory_not_file() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a directory instead of a file
+        let dir_path = temp_dir.path().join("testdir");
+        fs::create_dir(&dir_path).await.expect("Failed to create directory");
+        
+        let wc_tool = WcTool {
+            path: "testdir".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("projectfiles:wc"));
+        assert!(error.to_string().contains("not a file"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_path_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let wc_tool = WcTool {
+            path: "../outside.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("projectfiles:wc"));
+        let error_str = error.to_string();
+        assert!(error_str.contains("not found") || error_str.contains("outside the project directory"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_default_parameters() {
+        let (context, temp_dir) = setup_test_context().await;
+        let content = "Default test\nSecond line";
+        create_test_file(temp_dir.path(), "default.txt", content).await;
+        
+        // Test that defaults work (should count lines, words, chars but not bytes)
+        let wc_tool = WcTool {
+            path: "default.txt".to_string(),
+            count_lines: default_true(),
+            count_words: default_true(),
+            count_chars: default_true(),
+            count_bytes: false, // default is false for bytes
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should include lines, words, characters
+            assert!(content.contains("Lines:"));
+            assert!(content.contains("Words:"));
+            assert!(content.contains("Characters:"));
+            // Should NOT include bytes (default false)
+            assert!(!content.contains("Bytes:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wc_large_file() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a larger file with known counts
+        let mut large_content = String::new();
+        for i in 1..=100 {
+            large_content.push_str(&format!("Line {} with some words\n", i));
+        }
+        create_test_file(temp_dir.path(), "large.txt", &large_content).await;
+        
+        let wc_tool = WcTool {
+            path: "large.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: false,
+            count_bytes: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should correctly count many lines and words
+            assert!(content.contains("100 lines"));
+            assert!(content.contains("500 words")); // Each line has 5 words × 100 lines
+        }
+    }
 }

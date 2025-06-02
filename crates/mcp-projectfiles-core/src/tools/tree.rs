@@ -1,5 +1,7 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::{format_size, format_count, format_path};
+use async_trait::async_trait;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -42,11 +44,19 @@ fn default_path() -> String {
     ".".to_string()
 }
 
-impl TreeTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
+#[async_trait]
+impl StatefulTool for TreeTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
         // Get project root and resolve path
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+            
+        // Canonicalize project root for consistent path comparison
+        let current_dir = project_root.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let target_path = current_dir.join(&self.path);
         
@@ -252,5 +262,340 @@ async fn build_tree(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
 
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
 
+    async fn create_test_structure(base: &std::path::Path) {
+        // Create nested directory structure for testing
+        fs::create_dir(base.join("dir1")).await.unwrap();
+        fs::create_dir(base.join("dir2")).await.unwrap();
+        fs::create_dir(base.join("dir1/subdir1")).await.unwrap();
+        fs::create_dir(base.join("dir1/subdir2")).await.unwrap();
+        
+        // Create files
+        fs::write(base.join("file1.txt"), "content1").await.unwrap();
+        fs::write(base.join("file2.rs"), "fn main() {}").await.unwrap();
+        fs::write(base.join("dir1/nested.txt"), "nested").await.unwrap();
+        fs::write(base.join("dir1/subdir1/deep.txt"), "deep").await.unwrap();
+        
+        // Create hidden files
+        fs::write(base.join(".hidden"), "hidden").await.unwrap();
+        fs::write(base.join("dir1/.gitignore"), "*.tmp").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_tree_basic_structure() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        assert_eq!(output.is_error, None);
+        
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should contain tree structure
+            assert!(content.contains("├──") || content.contains("└──"));
+            assert!(content.contains("dir1"));
+            assert!(content.contains("dir2"));
+            assert!(content.contains("file1.txt"));
+            assert!(content.contains("file2.rs"));
+            
+            // Should contain summary
+            assert!(content.contains("directories"));
+            assert!(content.contains("files"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_dirs_only() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: true,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should contain directories
+            assert!(content.contains("dir1"));
+            assert!(content.contains("dir2"));
+            assert!(content.contains("subdir1"));
+            
+            // Should NOT contain files
+            assert!(!content.contains("file1.txt"));
+            assert!(!content.contains("file2.rs"));
+            assert!(!content.contains("nested.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_max_depth() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: Some(1),
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should contain top-level items
+            assert!(content.contains("dir1"));
+            assert!(content.contains("file1.txt"));
+            
+            // Should NOT contain deep nested items
+            assert!(!content.contains("subdir1"));
+            assert!(!content.contains("deep.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_show_hidden() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: true,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should contain hidden files
+            assert!(content.contains(".hidden"));
+            assert!(content.contains(".gitignore"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_pattern_filter() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: Some("*.rs".to_string()),
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+
+            
+            // Should contain .rs files
+            assert!(content.contains("file2.rs"));
+            
+            // Should NOT contain .txt files
+            assert!(!content.contains("file1.txt"));
+            assert!(!content.contains("nested.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_specific_directory() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: "dir1".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+
+            
+            // Should contain items from dir1
+            assert!(content.contains("subdir1"));
+            assert!(content.contains("nested.txt"));
+            
+            // Should NOT contain items from root (but dir2 might appear in summary path)
+            assert!(!content.contains("file1.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_empty_directory() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create only an empty directory
+        fs::create_dir(temp_dir.path().join("empty_dir")).await.unwrap();
+        
+        let tree_tool = TreeTool {
+            path: "empty_dir".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should contain summary showing 0 files
+            assert!(content.contains("0 files"));
+            assert!(content.contains("0 directories"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tree_nonexistent_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let tree_tool = TreeTool {
+            path: "nonexistent".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:tree"));
+        assert!(error_str.contains("Failed to resolve path"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_path_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let tree_tool = TreeTool {
+            path: "../outside".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:tree"));
+        assert!(error_str.contains("Failed to resolve path"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_invalid_pattern() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_structure(temp_dir.path()).await;
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: Some("[invalid".to_string()), // Invalid glob pattern
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("projectfiles:tree"));
+        assert!(error.to_string().contains("pattern") || error.to_string().contains("glob"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_file_sizes() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create files with known sizes
+        let large_content = "x".repeat(1024); // 1KB
+        fs::write(temp_dir.path().join("large.txt"), &large_content).await.unwrap();
+        fs::write(temp_dir.path().join("small.txt"), "small").await.unwrap();
+        
+        let tree_tool = TreeTool {
+            path: ".".to_string(),
+            max_depth: None,
+            show_hidden: false,
+            dirs_only: false,
+            pattern_filter: None,
+        };
+        
+        let result = tree_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+
+            
+            // Should show file sizes
+            assert!(content.contains("(1.0 KiB)") || content.contains("(1024 B)"));
+            assert!(content.contains("(5 B)"));
+        }
+    }
+}

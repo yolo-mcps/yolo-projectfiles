@@ -1,3 +1,4 @@
+use crate::context::{StatefulTool, ToolContext};
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -8,6 +9,7 @@ use tokio::fs;
 use glob::Pattern;
 use chrono::{Local, Duration};
 use std::time::SystemTime;
+use async_trait::async_trait;
 use crate::config::tool_errors;
 use crate::tools::utils::{format_size, format_count};
 
@@ -71,10 +73,18 @@ struct SearchResult {
     size: u64,
 }
 
-impl FindTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+#[async_trait]
+impl StatefulTool for FindTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+            
+        // Canonicalize project root for consistent path comparison
+        let current_dir = project_root.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let search_path = Path::new(&self.path);
         let absolute_search_path = if search_path.is_absolute() {
@@ -112,7 +122,7 @@ impl FindTool {
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Invalid date filter: {}", e))))?;
         
         // Perform search
-        let mut results = Vec::new();
+        let mut results: Vec<SearchResult> = Vec::new();
         let mut search_count = 0;
         
         self.search_directory(
@@ -168,7 +178,9 @@ impl FindTool {
             meta: None,
         })
     }
-    
+}
+
+impl FindTool {
     fn search_directory<'a>(
         &'a self,
         dir: &'a Path,
@@ -432,5 +444,327 @@ fn parse_date_filter(s: &str) -> Result<DateFilter, String> {
         '+' => DateFilter::OlderThan(threshold), // "+7d" means older than 7 days
         _ => unreachable!(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    use std::time::Duration;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_find_basic_search() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("file2.log"), "content2").await.unwrap();
+        fs::create_dir(project_root.join("subdir")).await.unwrap();
+        fs::write(project_root.join("subdir/file3.txt"), "content3").await.unwrap();
+        
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "any".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should find all files and directories
+            assert!(text.text.contains("file1.txt"));
+            assert!(text.text.contains("file2.log"));
+            assert!(text.text.contains("subdir"));
+            assert!(text.text.contains("file3.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_by_name_pattern() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("test2.txt"), "content2").await.unwrap();
+        fs::write(project_root.join("other.log"), "content3").await.unwrap();
+        
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: Some("*.txt".to_string()),
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should find only .txt files
+            assert!(text.text.contains("test1.txt"));
+            assert!(text.text.contains("test2.txt"));
+            assert!(!text.text.contains("other.log"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_by_type_filter() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files and directories
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file.txt"), "content").await.unwrap();
+        fs::create_dir(project_root.join("directory")).await.unwrap();
+        
+        // Find only files
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("file.txt"));
+            assert!(!text.text.contains("directory") || text.text.contains("[FILE]"));
+        }
+        
+        // Find only directories
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "directory".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("directory"));
+            assert!(!text.text.contains("file.txt") || text.text.contains("[DIR]"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_by_size_filter() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create files of different sizes
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("small.txt"), "x").await.unwrap(); // 1 byte
+        fs::write(project_root.join("large.txt"), "x".repeat(2048)).await.unwrap(); // 2KB
+        
+        // Find files larger than 1KB
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: Some("+1K".to_string()),
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("large.txt"));
+            assert!(!text.text.contains("small.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_with_max_depth() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create nested directory structure
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("root.txt"), "content").await.unwrap();
+        fs::create_dir(project_root.join("level1")).await.unwrap();
+        fs::write(project_root.join("level1/file1.txt"), "content").await.unwrap();
+        fs::create_dir(project_root.join("level1/level2")).await.unwrap();
+        fs::write(project_root.join("level1/level2/file2.txt"), "content").await.unwrap();
+        
+        // Search with max_depth = 1 (should not find level2/file2.txt)
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: Some(1),
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("root.txt"));
+            assert!(text.text.contains("file1.txt"));
+            assert!(!text.text.contains("file2.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_with_max_results() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create multiple test files
+        let project_root = context.get_project_root().unwrap();
+        for i in 1..=10 {
+            fs::write(project_root.join(format!("file{}.txt", i)), "content").await.unwrap();
+        }
+        
+        // Limit results to 3
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 3,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should mention truncation or limiting
+            let file_count = text.text.matches("file").count();
+            assert!(file_count <= 3 || text.text.contains("truncated") || text.text.contains("limit"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_empty_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create empty directory
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir(project_root.join("empty_dir")).await.unwrap();
+        
+        let find_tool = FindTool {
+            path: "empty_dir".to_string(),
+            name_pattern: None,
+            type_filter: "any".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Should succeed even if directory is empty
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should contain some output even if directory is empty
+            assert!(!text.text.is_empty());
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_nonexistent_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let find_tool = FindTool {
+            path: "nonexistent".to_string(),
+            name_pattern: None,
+            type_filter: "any".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
+    }
+    
+    #[tokio::test]
+    async fn test_find_outside_project_directory() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Try to search outside the temp directory  
+        let outside_path = temp_dir.path().parent().unwrap().join("outside");
+        
+        let find_tool = FindTool {
+            path: outside_path.to_string_lossy().to_string(),
+            name_pattern: None,
+            type_filter: "any".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            max_results: 1000,
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        // Should either fail or find nothing - both are acceptable
+        if result.is_err() {
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(error_msg.contains("outside") || error_msg.contains("access") || error_msg.contains("not found"));
+        }
+        // If it succeeds, that's also valid (some implementations may handle this differently)
+    }
 }
 

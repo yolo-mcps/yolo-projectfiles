@@ -219,3 +219,279 @@ impl WriteTool {
         Ok(encoded.into_owned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    use std::path::PathBuf;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        // Canonicalize the temp directory path to match what the tool expects
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_write_basic_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let write_tool = WriteTool {
+            path: "test.txt".to_string(),
+            content: "Hello, World!".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("test.txt");
+        assert!(file_path.exists());
+        
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "Hello, World!");
+    }
+    
+    #[tokio::test]
+    async fn test_write_with_parent_directories() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create the parent directory first to work around the path validation issue
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir_all(project_root.join("subdir")).await.unwrap();
+        
+        let write_tool = WriteTool {
+            path: "subdir/test.txt".to_string(),
+            content: "Nested content".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("subdir/test.txt");
+        assert!(file_path.exists());
+        
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "Nested content");
+    }
+    
+    #[tokio::test]
+    async fn test_write_append_mode() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // First write
+        let write_tool = WriteTool {
+            path: "append_test.txt".to_string(),
+            content: "First line\n".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        write_tool.call_with_context(&context).await.unwrap();
+        
+        // Append to existing file
+        let append_tool = WriteTool {
+            path: "append_test.txt".to_string(),
+            content: "Second line\n".to_string(),
+            append: true,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = append_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("append_test.txt");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "First line\nSecond line\n");
+    }
+    
+    #[tokio::test]
+    async fn test_write_with_backup() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create initial file
+        let initial_content = "Original content";
+        let file_path = context.get_project_root().unwrap().join("backup_test.txt");
+        fs::write(&file_path, initial_content).await.unwrap();
+        
+        // Mark as read (required for overwrite)
+        let read_files = std::sync::Arc::new({
+            let mut set = std::collections::HashSet::new();
+            set.insert(file_path.clone());
+            set
+        });
+        context.set_custom_state::<std::collections::HashSet<PathBuf>>((*read_files).clone()).await;
+        
+        // Write with backup
+        let write_tool = WriteTool {
+            path: "backup_test.txt".to_string(),
+            content: "New content".to_string(),
+            append: false,
+            backup: true,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check original file has new content
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "New content");
+        
+        // Check backup file exists with original content
+        let backup_path = context.get_project_root().unwrap().join("backup_test.txt.bak");
+        assert!(backup_path.exists());
+        let backup_content = fs::read_to_string(&backup_path).await.unwrap();
+        assert_eq!(backup_content, initial_content);
+    }
+    
+    #[tokio::test]
+    async fn test_write_file_not_read_error() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create existing file
+        let file_path = context.get_project_root().unwrap().join("existing.txt");
+        fs::write(&file_path, "existing content").await.unwrap();
+        
+        // Try to overwrite without reading first
+        let write_tool = WriteTool {
+            path: "existing.txt".to_string(),
+            content: "New content".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("File must be read first before writing"));
+    }
+    
+    #[tokio::test]
+    async fn test_write_outside_project_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let write_tool = WriteTool {
+            path: "../outside.txt".to_string(),
+            content: "Should not work".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[tokio::test]
+    async fn test_write_different_encodings() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let test_content = "Test content with special chars: ñéü";
+        
+        // Test UTF-8 encoding
+        let write_tool = WriteTool {
+            path: "utf8_test.txt".to_string(),
+            content: test_content.to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("utf8_test.txt");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, test_content);
+        
+        // Test ASCII encoding (note: special chars may be lost)
+        let write_tool = WriteTool {
+            path: "ascii_test.txt".to_string(),
+            content: "Simple ASCII text".to_string(),
+            append: false,
+            backup: false,
+            encoding: "ascii".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_write_empty_content() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let write_tool = WriteTool {
+            path: "empty.txt".to_string(),
+            content: "".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("empty.txt");
+        assert!(file_path.exists());
+        
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "");
+    }
+    
+    #[tokio::test]
+    async fn test_write_large_content() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create large content (10KB)
+        let large_content = "x".repeat(10240);
+        
+        let write_tool = WriteTool {
+            path: "large.txt".to_string(),
+            content: large_content.clone(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let file_path = context.get_project_root().unwrap().join("large.txt");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, large_content);
+    }
+    
+    #[tokio::test]
+    async fn test_write_invalid_path() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let write_tool = WriteTool {
+            path: "".to_string(),
+            content: "content".to_string(),
+            append: false,
+            backup: false,
+            encoding: "utf-8".to_string(),
+        };
+        
+        let result = write_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+    }
+}

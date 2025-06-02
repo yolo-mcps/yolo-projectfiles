@@ -1,5 +1,7 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::{format_path, format_count};
+use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -29,8 +31,12 @@ pub struct ChmodTool {
     pub pattern: bool,
 }
 
-impl ChmodTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
+#[async_trait]
+impl StatefulTool for ChmodTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
         // Check if we're on a Unix-like system
         #[cfg(not(unix))]
         {
@@ -44,8 +50,12 @@ impl ChmodTool {
         {
             use std::os::unix::fs::PermissionsExt;
             
-            let current_dir = std::env::current_dir()
-                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+            let project_root = context.get_project_root()
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+                
+            // Canonicalize project root for consistent path comparison
+            let current_dir = project_root.canonicalize()
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
             
             if self.pattern {
                 // Pattern matching mode - treat path as glob pattern
@@ -256,4 +266,257 @@ fn chmod_recursive(path: &Path, mode: u32) -> std::pin::Pin<Box<dyn std::future:
     
     Ok(count)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_basic_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("test.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "test.txt".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check permissions were set
+        let metadata = fs::metadata(&file_path).await.unwrap();
+        let permissions = metadata.permissions();
+        use std::os::unix::fs::PermissionsExt;
+        let mode = permissions.mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Changed permissions to 644"));
+            assert!(text.text.contains("test.txt"));
+        }
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_directory_recursive() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create directory structure
+        let project_root = context.get_project_root().unwrap();
+        let dir_path = project_root.join("test_dir");
+        fs::create_dir(&dir_path).await.unwrap();
+        fs::write(dir_path.join("file1.txt"), "content1").await.unwrap();
+        fs::write(dir_path.join("file2.txt"), "content2").await.unwrap();
+        
+        let sub_dir = dir_path.join("subdir");
+        fs::create_dir(&sub_dir).await.unwrap();
+        fs::write(sub_dir.join("file3.txt"), "content3").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "test_dir".to_string(),
+            mode: "755".to_string(),
+            recursive: true,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check permissions on directory and files
+        use std::os::unix::fs::PermissionsExt;
+        
+        let dir_metadata = fs::metadata(&dir_path).await.unwrap();
+        let dir_mode = dir_metadata.permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o755);
+        
+        let file_metadata = fs::metadata(dir_path.join("file1.txt")).await.unwrap();
+        let file_mode = file_metadata.permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o755);
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Changed permissions to 755"));
+            assert!(text.text.contains("test_dir"));
+            assert!(text.text.contains("items") || text.text.contains("item"));
+        }
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_with_pattern() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create multiple test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("test2.txt"), "content2").await.unwrap();
+        fs::write(project_root.join("other.log"), "content3").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "test*.txt".to_string(),
+            mode: "600".to_string(),
+            recursive: false,
+            pattern: true,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check permissions on matching files
+        use std::os::unix::fs::PermissionsExt;
+        
+        let file1_metadata = fs::metadata(project_root.join("test1.txt")).await.unwrap();
+        let file1_mode = file1_metadata.permissions().mode() & 0o777;
+        assert_eq!(file1_mode, 0o600);
+        
+        let file2_metadata = fs::metadata(project_root.join("test2.txt")).await.unwrap();
+        let file2_mode = file2_metadata.permissions().mode() & 0o777;
+        assert_eq!(file2_mode, 0o600);
+        
+        // Non-matching file should be unchanged (check it exists but don't check permissions)
+        assert!(project_root.join("other.log").exists());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Changed permissions to 600"));
+            assert!(text.text.contains("test*.txt"));
+        }
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_invalid_mode() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test.txt"), "content").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "test.txt".to_string(),
+            mode: "999".to_string(), // Invalid octal mode
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid mode") || error_msg.contains("octal"));
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_nonexistent_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let chmod_tool = ChmodTool {
+            path: "nonexistent.txt".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_outside_project_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let chmod_tool = ChmodTool {
+            path: "../outside.txt".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn test_chmod_non_unix_system() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let chmod_tool = ChmodTool {
+            path: "test.txt".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Unix-like systems"));
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_directory_non_recursive() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create directory with files
+        let project_root = context.get_project_root().unwrap();
+        let dir_path = project_root.join("test_dir");
+        fs::create_dir(&dir_path).await.unwrap();
+        fs::write(dir_path.join("file.txt"), "content").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "test_dir".to_string(),
+            mode: "700".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check only directory permissions changed, not file
+        use std::os::unix::fs::PermissionsExt;
+        
+        let dir_metadata = fs::metadata(&dir_path).await.unwrap();
+        let dir_mode = dir_metadata.permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700);
+        
+        // File permissions should be unchanged (original permissions)
+        let file_metadata = fs::metadata(dir_path.join("file.txt")).await.unwrap();
+        let file_mode = file_metadata.permissions().mode() & 0o777;
+        assert_ne!(file_mode, 0o700); // Should not be changed to 700
+    }
 }

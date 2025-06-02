@@ -1,4 +1,6 @@
+use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use async_trait::async_trait;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -24,10 +26,18 @@ pub struct StatTool {
     pub follow_symlinks: bool,
 }
 
-impl StatTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+#[async_trait]
+impl StatefulTool for StatTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+            
+        // Canonicalize project root for consistent path comparison
+        let current_dir = project_root.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -201,4 +211,215 @@ fn format_permissions(mode: u32) -> String {
     });
     
     perms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_stat_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let test_content = "Hello, World!";
+        fs::write(project_root.join("test.txt"), test_content).await.unwrap();
+        
+        let stat_tool = StatTool {
+            path: "test.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Check that output contains expected file information (JSON format)
+            assert!(text.text.contains("test.txt"));
+            assert!(text.text.contains("\"type\": \"file\""));
+            assert!(text.text.contains("\"size\":"));
+            assert!(text.text.contains(&test_content.len().to_string()));
+            assert!(text.text.contains("\"modified\":"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test directory
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir(project_root.join("test_dir")).await.unwrap();
+        
+        let stat_tool = StatTool {
+            path: "test_dir".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Check that output contains expected directory information (JSON format)
+            assert!(text.text.contains("test_dir"));
+            assert!(text.text.contains("\"type\": \"directory\""));
+            assert!(text.text.contains("\"modified\":"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_nonexistent_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let stat_tool = StatTool {
+            path: "nonexistent.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
+    }
+    
+    #[tokio::test]
+    async fn test_stat_outside_project_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let stat_tool = StatTool {
+            path: "../outside.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_stat_with_permissions() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file with specific permissions
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("perms_test.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        // Set specific permissions (readable by owner only)
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&file_path).await.unwrap().permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&file_path, perms).await.unwrap();
+        
+        let stat_tool = StatTool {
+            path: "perms_test.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Check that permissions are shown (JSON format)
+            assert!(text.text.contains("\"permissions\":"));
+            assert!(text.text.contains("rw-------") || text.text.contains("\"mode\": \"600\""));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_follow_symlinks_flag() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("target.txt"), "content").await.unwrap();
+        
+        // Test with follow_symlinks=true
+        let stat_tool = StatTool {
+            path: "target.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Test with follow_symlinks=false  
+        let stat_tool = StatTool {
+            path: "target.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_stat_empty_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create empty file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("empty.txt"), "").await.unwrap();
+        
+        let stat_tool = StatTool {
+            path: "empty.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("empty.txt"));
+            assert!(text.text.contains("\"size\": 0"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_large_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create large file (10KB)
+        let project_root = context.get_project_root().unwrap();
+        let large_content = "x".repeat(10240);
+        fs::write(project_root.join("large.txt"), &large_content).await.unwrap();
+        
+        let stat_tool = StatTool {
+            path: "large.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("large.txt"));
+            assert!(text.text.contains("\"size\": 10240"));
+        }
+    }
 }

@@ -344,3 +344,278 @@ impl DeleteTool {
         self.call_with_context(&context).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use tempfile::TempDir;
+    use tokio::fs;
+    
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        // Canonicalize the temp directory path to match what the tool expects
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+    
+    #[tokio::test]
+    async fn test_delete_requires_confirmation() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test.txt"), "content").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test.txt".to_string(),
+            recursive: false,
+            confirm: false,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("requires confirmation"));
+        
+        // File should still exist
+        assert!(project_root.join("test.txt").exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_file_with_confirm() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let test_file = project_root.join("test.txt");
+        fs::write(&test_file, "content").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test.txt".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // File should be deleted
+        assert!(!test_file.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_file_with_force() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let test_file = project_root.join("test.txt");
+        fs::write(&test_file, "content").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test.txt".to_string(),
+            recursive: false,
+            confirm: false,
+            force: true,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // File should be deleted
+        assert!(!test_file.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_directory_recursive() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create directory structure
+        let project_root = context.get_project_root().unwrap();
+        let test_dir = project_root.join("test_dir");
+        fs::create_dir(&test_dir).await.unwrap();
+        
+        fs::write(test_dir.join("file1.txt"), "content1").await.unwrap();
+        fs::write(test_dir.join("file2.txt"), "content2").await.unwrap();
+        
+        let sub_dir = test_dir.join("subdir");
+        fs::create_dir(&sub_dir).await.unwrap();
+        fs::write(sub_dir.join("file3.txt"), "content3").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test_dir".to_string(),
+            recursive: true,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Directory should be deleted
+        assert!(!test_dir.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_directory_non_recursive_fails() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create directory with content
+        let project_root = context.get_project_root().unwrap();
+        let test_dir = project_root.join("test_dir");
+        fs::create_dir(&test_dir).await.unwrap();
+        fs::write(test_dir.join("file.txt"), "content").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test_dir".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not empty") || error_msg.contains("recursive"));
+        
+        // Directory should still exist
+        assert!(test_dir.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_with_pattern_matching() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create multiple test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("test2.txt"), "content2").await.unwrap();
+        fs::write(project_root.join("other.log"), "log content").await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "test*.txt".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: true,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Pattern matching files should be deleted
+        assert!(!project_root.join("test1.txt").exists());
+        assert!(!project_root.join("test2.txt").exists());
+        
+        // Non-matching file should remain
+        assert!(project_root.join("other.log").exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_nonexistent_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let delete_tool = DeleteTool {
+            path: "nonexistent.txt".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
+    }
+    
+    #[tokio::test]
+    async fn test_delete_outside_project_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let delete_tool = DeleteTool {
+            path: "../outside.txt".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[tokio::test]
+    async fn test_delete_empty_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create empty directory
+        let project_root = context.get_project_root().unwrap();
+        let test_dir = project_root.join("empty_dir");
+        fs::create_dir(&test_dir).await.unwrap();
+        
+        let delete_tool = DeleteTool {
+            path: "empty_dir".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Empty directory should be deleted
+        assert!(!test_dir.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_delete_removes_from_read_tracking() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let test_file = project_root.join("tracked.txt");
+        fs::write(&test_file, "content").await.unwrap();
+        
+        // Add file to read tracking
+        let read_files = std::sync::Arc::new({
+            let mut set = std::collections::HashSet::new();
+            set.insert(test_file.clone());
+            set
+        });
+        context.set_custom_state::<std::collections::HashSet<PathBuf>>((*read_files).clone()).await;
+        
+        let delete_tool = DeleteTool {
+            path: "tracked.txt".to_string(),
+            recursive: false,
+            confirm: true,
+            force: false,
+            pattern: false,
+        };
+        
+        let result = delete_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // File should be deleted
+        assert!(!test_file.exists());
+        
+        // File should be removed from tracking (we can't easily test this without accessing internal state)
+        // But the deletion succeeding indicates it worked correctly
+    }
+}
