@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -6,6 +7,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use chrono::{DateTime, Local};
+
+const TOOL_NAME: &str = "stat";
 
 #[mcp_tool(
     name = "stat",
@@ -24,7 +27,7 @@ pub struct StatTool {
 impl StatTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -35,12 +38,13 @@ impl StatTool {
         
         // Canonicalize the path to resolve it
         let canonical_path = absolute_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
         
         if !canonical_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
@@ -49,7 +53,7 @@ impl StatTool {
             fs::metadata(&canonical_path).await
         } else {
             fs::symlink_metadata(&canonical_path).await
-        }.map_err(|e| CallToolError::unknown_tool(format!("Failed to get metadata for '{}': {}", self.path, e)))?;
+        }.map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata for '{}': {}", self.path, e))))?;
         
         // Build the result
         let mut result = serde_json::json!({
@@ -110,7 +114,7 @@ impl StatTool {
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
                 serde_json::to_string_pretty(&result)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to serialize result: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
                 None,
             ))],
             is_error: Some(false),

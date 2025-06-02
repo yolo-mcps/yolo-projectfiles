@@ -1,4 +1,5 @@
 use crate::context::{StatefulTool, ToolContext};
+use crate::config::tool_errors;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -8,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+
+const TOOL_NAME: &str = "edit";
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditOperation {
@@ -62,9 +65,10 @@ impl StatefulTool for EditTool {
             if !edits.is_empty() {
                 edits
             } else {
-                return Err(CallToolError::unknown_tool(
-                    "projectfiles:edit - No edit operations provided".to_string()
-                ));
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME, 
+                    "No edit operations provided"
+                )));
             }
         } else if let (Some(old_string), Some(new_string)) = (self.old_string, self.new_string) {
             // Single edit mode - convert to list
@@ -74,12 +78,13 @@ impl StatefulTool for EditTool {
                 expected_replacements: self.expected_replacements.unwrap_or(1),
             }]
         } else {
-            return Err(CallToolError::unknown_tool(
-                "projectfiles:edit - Must provide either 'edits' array or 'old_string'/'new_string' pair".to_string()
-            ));
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME, 
+                "Must provide either 'edits' array or 'old_string'/'new_string' pair"
+            )));
         };
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let requested_path = Path::new(&self.file_path);
         let absolute_path = if requested_path.is_absolute() {
@@ -89,26 +94,24 @@ impl StatefulTool for EditTool {
         };
         
         let canonical_path = absolute_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to resolve path '{}': {}", self.file_path, e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path '{}': {}", self.file_path, e))))?;
         
         if !canonical_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "projectfiles:edit - Access denied: Path '{}' is outside the project directory",
-                self.file_path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME, 
+                &self.file_path, 
+                "Path is outside the project directory"
             )));
         }
 
         if !canonical_path.exists() {
-            return Err(CallToolError::unknown_tool(format!(
-                "projectfiles:edit - File not found: {}",
-                self.file_path
-            )));
+            return Err(CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.file_path)));
         }
 
         if !canonical_path.is_file() {
-            return Err(CallToolError::unknown_tool(format!(
-                "projectfiles:edit - Path is not a file: {}",
-                self.file_path
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME, 
+                &format!("Path is not a file: {}", self.file_path)
             )));
         }
 
@@ -120,11 +123,11 @@ impl StatefulTool for EditTool {
             if let Some(parent) = canonical_path.parent() {
                 fs::create_dir_all(parent)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to create directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create directory: {}", e))))?;
             }
             fs::write(&canonical_path, "")
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to create file: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create file: {}", e))))?;
         }
         
         // Check if file has been read (unless it's a new file)
@@ -132,18 +135,18 @@ impl StatefulTool for EditTool {
             .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
         
         if !is_new_file && !read_files.contains(&canonical_path) {
-            return Err(CallToolError::unknown_tool(format!(
-                "projectfiles:edit - File must be read before editing: {}",
-                self.file_path
+            return Err(CallToolError::from(tool_errors::operation_not_permitted(
+                TOOL_NAME, 
+                &format!("File must be read before editing: {}", self.file_path)
             )));
         }
 
         // Validate all edits first
         for (idx, edit) in edits.iter().enumerate() {
             if edit.old_string == edit.new_string {
-                return Err(CallToolError::unknown_tool(format!(
-                    "projectfiles:edit - Edit {}: old_string and new_string cannot be the same",
-                    idx + 1
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME, 
+                    &format!("Edit {}: old_string and new_string cannot be the same", idx + 1)
                 )));
             }
         }
@@ -151,7 +154,7 @@ impl StatefulTool for EditTool {
         // Read the file
         let mut content = fs::read_to_string(&canonical_path)
             .await
-            .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to read file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file: {}", e))))?;
 
         // Apply edits sequentially
         let mut total_replacements = 0;
@@ -160,16 +163,16 @@ impl StatefulTool for EditTool {
             let occurrence_count = content.matches(&edit.old_string).count();
             
             if occurrence_count == 0 && !edit.old_string.is_empty() {
-                return Err(CallToolError::unknown_tool(format!(
-                    "projectfiles:edit - Edit {}: String '{}' not found in content",
-                    idx + 1, edit.old_string
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME, 
+                    &format!("Edit {}: String '{}' not found in content", idx + 1, edit.old_string)
                 )));
             }
 
             if occurrence_count != edit.expected_replacements as usize {
-                return Err(CallToolError::unknown_tool(format!(
-                    "projectfiles:edit - Edit {}: Expected {} replacements but found {} occurrences",
-                    idx + 1, edit.expected_replacements, occurrence_count
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME, 
+                    &format!("Edit {}: Expected {} replacements but found {} occurrences", idx + 1, edit.expected_replacements, occurrence_count)
                 )));
             }
 
@@ -181,7 +184,7 @@ impl StatefulTool for EditTool {
         // Write back to file
         fs::write(&canonical_path, &content)
             .await
-            .map_err(|e| CallToolError::unknown_tool(format!("projectfiles:edit - Failed to write file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to write file: {}", e))))?;
 
         // Track written files
         let written_files = context.get_custom_state::<HashSet<PathBuf>>().await

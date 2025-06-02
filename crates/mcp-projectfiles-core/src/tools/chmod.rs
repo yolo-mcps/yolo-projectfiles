@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -6,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
 use glob::{glob_with, MatchOptions};
+
+const TOOL_NAME: &str = "chmod";
 
 #[mcp_tool(
     name = "chmod", 
@@ -30,9 +33,10 @@ impl ChmodTool {
         // Check if we're on a Unix-like system
         #[cfg(not(unix))]
         {
-            return Err(CallToolError::unknown_tool(
-                "chmod is only available on Unix-like systems".to_string()
-            ));
+            return Err(CallToolError::from(tool_errors::operation_not_permitted(
+                TOOL_NAME,
+                "chmod is only available on Unix-like systems"
+            )));
         }
         
         #[cfg(unix)]
@@ -40,7 +44,7 @@ impl ChmodTool {
             use std::os::unix::fs::PermissionsExt;
             
             let current_dir = std::env::current_dir()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
             
             if self.pattern {
                 // Pattern matching mode - treat path as glob pattern
@@ -57,22 +61,22 @@ impl ChmodTool {
                 };
                 
                 let paths: Vec<_> = glob_with(&pattern_path, options)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Invalid pattern '{}': {}", self.path, e)))?
+                    .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.path, &e.to_string())))?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to expand pattern: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to expand pattern: {}", e))))?;
                 
                 if paths.is_empty() {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "No files found matching pattern: {}",
-                        self.path
+                    return Err(CallToolError::from(tool_errors::file_not_found(
+                        TOOL_NAME,
+                        &format!("No files found matching pattern: {}", self.path)
                     )));
                 }
                 
                 // Parse the mode
                 let mode = u32::from_str_radix(&self.mode, 8)
-                    .map_err(|_| CallToolError::unknown_tool(format!(
-                        "Invalid mode '{}'. Must be an octal number like '755' or '644'",
-                        self.mode
+                    .map_err(|_| CallToolError::from(tool_errors::invalid_input(
+                        TOOL_NAME,
+                        &format!("Invalid mode '{}'. Must be an octal number like '755' or '644'", self.mode)
                     )))?;
                 
                 let mut changed_paths = Vec::new();
@@ -81,7 +85,7 @@ impl ChmodTool {
                 for path in paths {
                     // Security check: ensure path is within project directory
                     let canonical_path = path.canonicalize()
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", path.display(), e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path '{}': {}", path.display(), e))))?;
                     
                     if !canonical_path.starts_with(&current_dir) {
                         continue; // Skip paths outside project directory
@@ -89,12 +93,12 @@ impl ChmodTool {
                     
                     // Apply chmod
                     let metadata = fs::metadata(&canonical_path).await
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata for '{}': {}", path.display(), e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata for '{}': {}", path.display(), e))))?;
                     
                     let changed_count = if metadata.is_file() || (metadata.is_dir() && !self.recursive) {
                         let permissions = std::fs::Permissions::from_mode(mode);
                         fs::set_permissions(&canonical_path, permissions).await
-                            .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions for '{}': {}", path.display(), e)))?;
+                            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set permissions for '{}': {}", path.display(), e))))?;
                         1
                     } else if metadata.is_dir() && self.recursive {
                         chmod_recursive(&canonical_path, mode).await?
@@ -134,32 +138,33 @@ impl ChmodTool {
             };
             
             let canonical_path = absolute_path.canonicalize()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?;
+                .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
             
             if !canonical_path.starts_with(&current_dir) {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Access denied: Path '{}' is outside the project directory",
-                    self.path
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    TOOL_NAME,
+                    &self.path,
+                    "Path is outside the project directory"
                 )));
             }
             
             if !canonical_path.exists() {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Path not found: {}",
-                    self.path
+                return Err(CallToolError::from(tool_errors::file_not_found(
+                    TOOL_NAME,
+                    &self.path
                 )));
             }
             
             // Parse the mode
             let mode = u32::from_str_radix(&self.mode, 8)
-                .map_err(|_| CallToolError::unknown_tool(format!(
-                    "Invalid mode '{}'. Must be an octal number like '755' or '644'",
-                    self.mode
+                .map_err(|_| CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Invalid mode '{}'. Must be an octal number like '755' or '644'", self.mode)
                 )))?;
             
             let metadata = fs::metadata(&canonical_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
             
             let mut changed_count = 0;
             
@@ -168,7 +173,7 @@ impl ChmodTool {
                 let permissions = std::fs::Permissions::from_mode(mode);
                 fs::set_permissions(&canonical_path, permissions)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set permissions: {}", e))))?;
                 changed_count = 1;
             } else if metadata.is_dir() && self.recursive {
                 // Recursive directory permissions
@@ -209,19 +214,19 @@ fn chmod_recursive(path: &Path, mode: u32) -> std::pin::Pin<Box<dyn std::future:
     let permissions = std::fs::Permissions::from_mode(mode);
     fs::set_permissions(path, permissions)
         .await
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set permissions: {}", e))))?;
     
     // Read directory entries
     let mut entries = fs::read_dir(path)
         .await
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e))))?;
     
     loop {
         match entries.next_entry().await {
             Ok(Some(entry)) => {
                 let entry_path = entry.path();
                 let file_type = entry.file_type().await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to get file type: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file type: {}", e))))?;
                 
                 if file_type.is_dir() {
                     count += Box::pin(chmod_recursive(&entry_path, mode)).await?;
@@ -229,12 +234,12 @@ fn chmod_recursive(path: &Path, mode: u32) -> std::pin::Pin<Box<dyn std::future:
                     let permissions = std::fs::Permissions::from_mode(mode);
                     fs::set_permissions(&entry_path, permissions)
                         .await
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions: {}", e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set permissions: {}", e))))?;
                     count += 1;
                 }
             }
             Ok(None) => break,
-            Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read entry: {}", e))),
+            Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read entry: {}", e)))),
         }
     }
     

@@ -1,0 +1,2 @@
+UTF-16 Big Endian test file
+Contains special chars: àáâãäå

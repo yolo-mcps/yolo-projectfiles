@@ -1,4 +1,5 @@
 use crate::context::{StatefulTool, ToolContext};
+use crate::config::tool_errors;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -9,6 +10,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use encoding_rs;
+
+const TOOL_NAME: &str = "write";
 
 fn default_encoding() -> String {
     "utf-8".to_string()
@@ -40,7 +43,7 @@ impl StatefulTool for WriteTool {
         context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -53,18 +56,19 @@ impl StatefulTool for WriteTool {
         // For new files, canonicalize the parent directory and ensure the full path is within bounds
         let canonical_path = if absolute_path.exists() {
             absolute_path.canonicalize()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path '{}': {}", self.path, e))))?
         } else {
             // For new files, canonicalize the parent directory
             if let Some(parent) = absolute_path.parent() {
                 let canonical_parent = parent.canonicalize()
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve parent directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve parent directory: {}", e))))?;
                 
                 // Ensure the parent is within the project directory
                 if !canonical_parent.starts_with(&current_dir) {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Access denied: Path '{}' is outside the project directory",
-                        self.path
+                    return Err(CallToolError::from(tool_errors::access_denied(
+                        TOOL_NAME, 
+                        &self.path, 
+                        "Path is outside the project directory"
                     )));
                 }
                 
@@ -72,23 +76,24 @@ impl StatefulTool for WriteTool {
                 if let Some(file_name) = absolute_path.file_name() {
                     canonical_parent.join(file_name)
                 } else {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Invalid file path: '{}'",
-                        self.path
+                    return Err(CallToolError::from(tool_errors::invalid_input(
+                        TOOL_NAME, 
+                        &format!("Invalid file path: '{}'", self.path)
                     )));
                 }
             } else {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Invalid file path: '{}'",
-                    self.path
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME, 
+                    &format!("Invalid file path: '{}'", self.path)
                 )));
             }
         };
         
         if !canonical_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME, 
+                &self.path, 
+                "Path is outside the project directory"
             )));
         }
 
@@ -96,9 +101,9 @@ impl StatefulTool for WriteTool {
             .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
         
         if canonical_path.exists() && !read_files.contains(&canonical_path) && !self.append {
-            return Err(CallToolError::unknown_tool(format!(
-                "Cannot write to '{}': File must be read first before writing",
-                self.path
+            return Err(CallToolError::from(tool_errors::operation_not_permitted(
+                TOOL_NAME, 
+                &format!("Cannot write to '{}': File must be read first before writing", self.path)
             )));
         }
 
@@ -106,7 +111,7 @@ impl StatefulTool for WriteTool {
             if !parent.exists() {
                 fs::create_dir_all(parent)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to create parent directories: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create parent directories: {}", e))))?;
             }
         }
 
@@ -126,7 +131,7 @@ impl StatefulTool for WriteTool {
             
             fs::copy(&canonical_path, &backup_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to create backup: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create backup: {}", e))))?;
             
             backup_created = true;
         }
@@ -140,17 +145,17 @@ impl StatefulTool for WriteTool {
                 .append(true)
                 .open(&canonical_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to open file for appending: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to open file for appending: {}", e))))?;
             
             let encoded_bytes = self.encode_content()?;
             file.write_all(&encoded_bytes)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to append to file: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to append to file: {}", e))))?;
         } else {
             let encoded_bytes = self.encode_content()?;
             fs::write(&canonical_path, &encoded_bytes)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to write file: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to write file: {}", e))))?;
         }
 
         let mut read_files_clone = (*read_files).clone();

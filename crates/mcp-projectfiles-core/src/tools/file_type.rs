@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -6,6 +7,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncReadExt;
+
+const TOOL_NAME: &str = "file_type";
 
 #[mcp_tool(
     name = "file_type",
@@ -21,48 +24,49 @@ impl FileTypeTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         // Get current directory and resolve path
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let target_path = current_dir.join(&self.path);
         
         // Security check - ensure path is within project directory
         let normalized_path = target_path
             .canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
             
         if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
         // Check if file exists
         if !normalized_path.exists() {
-            return Err(CallToolError::unknown_tool(format!(
-                "File '{}' does not exist",
-                self.path
+            return Err(CallToolError::from(tool_errors::file_not_found(
+                TOOL_NAME,
+                &self.path
             )));
         }
         
         if !normalized_path.is_file() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path '{}' is not a file",
-                self.path
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Path '{}' is not a file", self.path)
             )));
         }
         
         // Get file metadata
         let metadata = fs::metadata(&normalized_path).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get file metadata: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file metadata: {}", e))))?;
         
         // Read first chunk of file for analysis
         let mut file = fs::File::open(&normalized_path).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to open file: {}", e))))?;
         
         let mut buffer = vec![0u8; 8192]; // Read up to 8KB for analysis
         let bytes_read = file.read(&mut buffer).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file: {}", e))))?;
         
         buffer.truncate(bytes_read);
         
@@ -98,7 +102,7 @@ impl FileTypeTool {
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
                 serde_json::to_string_pretty(&result)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to serialize result: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
                 None,
             ))],
             is_error: Some(false),

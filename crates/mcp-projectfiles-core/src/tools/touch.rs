@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -8,6 +9,8 @@ use tokio::fs;
 use std::time::SystemTime;
 use chrono::DateTime;
 use filetime::{set_file_times, FileTime};
+
+const TOOL_NAME: &str = "touch";
 
 #[mcp_tool(
     name = "touch", 
@@ -55,7 +58,7 @@ fn default_update_mtime() -> bool {
 impl TouchTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -67,11 +70,12 @@ impl TouchTool {
         // Validate the full path is within project bounds
         if absolute_path.exists() {
             let canonical_path = absolute_path.canonicalize()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
             if !canonical_path.starts_with(&current_dir) {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Access denied: Path '{}' is outside the project directory",
-                    self.path
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    TOOL_NAME,
+                    &self.path,
+                    "Path is outside the project directory"
                 )));
             }
         } else {
@@ -79,20 +83,22 @@ impl TouchTool {
             if let Some(parent) = absolute_path.parent() {
                 if parent.exists() {
                     let canonical_parent = parent.canonicalize()
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve parent directory: {}", e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve parent directory: {}", e))))?;
                     if !canonical_parent.starts_with(&current_dir) {
-                        return Err(CallToolError::unknown_tool(format!(
-                            "Access denied: Path '{}' would be outside the project directory",
-                            self.path
+                        return Err(CallToolError::from(tool_errors::access_denied(
+                            TOOL_NAME,
+                            &self.path,
+                            "Path would be outside the project directory"
                         )));
                     }
                     // Reconstruct path to ensure it stays within bounds
                     if let Some(file_name) = absolute_path.file_name() {
                         let final_path = canonical_parent.join(file_name);
                         if !final_path.starts_with(&current_dir) {
-                            return Err(CallToolError::unknown_tool(format!(
-                                "Access denied: Path '{}' would be outside the project directory",
-                                self.path
+                            return Err(CallToolError::from(tool_errors::access_denied(
+                                TOOL_NAME,
+                                &self.path,
+                                "Path would be outside the project directory"
                             )));
                         }
                     }
@@ -102,11 +108,12 @@ impl TouchTool {
                     while let Some(ancestor) = check_path.parent() {
                         if ancestor.exists() {
                             let canonical_ancestor = ancestor.canonicalize()
-                                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve ancestor directory: {}", e)))?;
+                                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve ancestor directory: {}", e))))?;
                             if !canonical_ancestor.starts_with(&current_dir) {
-                                return Err(CallToolError::unknown_tool(format!(
-                                    "Access denied: Path '{}' would be outside the project directory",
-                                    self.path
+                                return Err(CallToolError::from(tool_errors::access_denied(
+                                    TOOL_NAME,
+                                    &self.path,
+                                    "Path would be outside the project directory"
                                 )));
                             }
                             break;
@@ -117,7 +124,7 @@ impl TouchTool {
                     // Create parent directories
                     fs::create_dir_all(parent)
                         .await
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to create parent directory: {}", e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create parent directory: {}", e))))?;
                 }
             }
         }
@@ -129,24 +136,24 @@ impl TouchTool {
                 // Create empty file
                 fs::write(&absolute_path, b"")
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to create file: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create file: {}", e))))?;
                 action = "created";
             } else {
-                return Err(CallToolError::unknown_tool(format!(
-                    "File '{}' does not exist and create=false",
-                    self.path
+                return Err(CallToolError::from(tool_errors::file_not_found(
+                    TOOL_NAME,
+                    &format!("File '{}' does not exist and create=false", self.path)
                 )));
             }
         } else {
             // File exists, check if it's a file
             let metadata = fs::metadata(&absolute_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
             
             if !metadata.is_file() {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Path '{}' exists but is not a file",
-                    self.path
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Path '{}' exists but is not a file", self.path)
                 )));
             }
         }
@@ -155,7 +162,7 @@ impl TouchTool {
         if self.update_atime || self.update_mtime {
             let metadata = fs::metadata(&absolute_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
             
             let current_atime = FileTime::from_last_access_time(&metadata);
             let current_mtime = FileTime::from_last_modification_time(&metadata);
@@ -169,25 +176,26 @@ impl TouchTool {
                 };
                 
                 let ref_canonical_path = ref_absolute_path.canonicalize()
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve reference path '{}': {}", reference_path, e)))?;
+                    .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, reference_path)))?;
                 
                 if !ref_canonical_path.starts_with(&current_dir) {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Access denied: Reference path '{}' is outside the project directory",
-                        reference_path
+                    return Err(CallToolError::from(tool_errors::access_denied(
+                        TOOL_NAME,
+                        reference_path,
+                        "Reference path is outside the project directory"
                     )));
                 }
                 
                 if !ref_canonical_path.exists() {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Reference file not found: {}",
+                    return Err(CallToolError::from(tool_errors::file_not_found(
+                        TOOL_NAME,
                         reference_path
                     )));
                 }
                 
                 let ref_metadata = fs::metadata(&ref_canonical_path)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to read reference file metadata: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read reference file metadata: {}", e))))?;
                 
                 (
                     FileTime::from_last_access_time(&ref_metadata),
@@ -222,7 +230,7 @@ impl TouchTool {
             };
             
             set_file_times(&absolute_path, new_atime, new_mtime)
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to set timestamps: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set timestamps: {}", e))))?;
             
             if action != "created" {
                 action = "updated";
@@ -241,9 +249,9 @@ impl TouchTool {
     fn parse_timestamp(&self, timestamp_str: &str, field_name: &str) -> Result<FileTime, CallToolError> {
         // Try to parse as ISO 8601 format
         let dt = DateTime::parse_from_rfc3339(timestamp_str)
-            .map_err(|e| CallToolError::unknown_tool(format!(
-                "Invalid {} format '{}': {}. Expected ISO 8601 format like '2023-12-25T10:30:00Z'",
-                field_name, timestamp_str, e
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Invalid {} format '{}': {}. Expected ISO 8601 format like '2023-12-25T10:30:00Z'", field_name, timestamp_str, e)
             )))?;
         
         let system_time: SystemTime = dt.into();

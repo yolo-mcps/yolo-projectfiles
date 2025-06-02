@@ -1,9 +1,12 @@
+use crate::config::tool_errors;
 
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
+
+const TOOL_NAME: &str = "process";
 
 #[mcp_tool(
     name = "process",
@@ -82,7 +85,7 @@ impl ProcessTool {
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
                 serde_json::to_string_pretty(&result_json)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to serialize result: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
                 None,
             ))],
             is_error: Some(false),
@@ -110,7 +113,7 @@ fn get_processes_by_pattern(
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        Err(CallToolError::unknown_tool("Process monitoring not supported on this platform".to_string()))
+        Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, "Process monitoring not supported on this platform")))
     }
 }
 
@@ -129,7 +132,7 @@ fn get_all_processes(max_results: usize, include_full_command: bool) -> Result<V
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        Err(CallToolError::unknown_tool("Process monitoring not supported on this platform".to_string()))
+        Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, "Process monitoring not supported on this platform")))
     }
 }
 
@@ -146,12 +149,12 @@ fn get_processes_macos(
     cmd.args(&["-axo", "pid,comm,%cpu,rss,stat"]);
     
     let output = cmd.output()
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to execute ps command: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to execute ps command: {}", e))))?;
     
     if !output.status.success() {
-        return Err(CallToolError::unknown_tool(
-            format!("ps command failed: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME,
+            &format!("ps command failed: {}", String::from_utf8_lossy(&output.stderr))
+        )));
     }
     
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -224,12 +227,12 @@ fn get_processes_linux(
     cmd.args(&["-axo", "pid,comm,%cpu,rss,stat"]);
     
     let output = cmd.output()
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to execute ps command: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to execute ps command: {}", e))))?;
     
     if !output.status.success() {
-        return Err(CallToolError::unknown_tool(
-            format!("ps command failed: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME,
+            &format!("ps command failed: {}", String::from_utf8_lossy(&output.stderr))
+        )));
     }
     
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -298,12 +301,12 @@ fn get_processes_windows(
     cmd.args(&["process", "get", "ProcessId,Name,PageFileUsage,WorkingSetSize", "/format:csv"]);
     
     let output = cmd.output()
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to execute wmic command: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to execute wmic command: {}", e))))?;
     
     if !output.status.success() {
-        return Err(CallToolError::unknown_tool(
-            format!("wmic command failed: {}", String::from_utf8_lossy(&output.stderr))
-        ));
+        return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME,
+            &format!("wmic command failed: {}", String::from_utf8_lossy(&output.stderr))
+        )));
     }
     
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -381,7 +384,7 @@ fn check_ports(ports: &[u16]) -> Result<Vec<PortInfo>, CallToolError> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
-        Err(CallToolError::unknown_tool("Port checking not supported on this platform".to_string()))
+        Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, "Port checking not supported on this platform")))
     }
 }
 
@@ -475,7 +478,7 @@ fn check_ports_windows(ports: &[u16]) -> Result<Vec<PortInfo>, CallToolError> {
         let output = Command::new("netstat")
             .args(&["-ano", "-p", "TCP"])
             .output()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to execute netstat: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to execute netstat: {}", e))))?;
         
         if !output.status.success() {
             continue;

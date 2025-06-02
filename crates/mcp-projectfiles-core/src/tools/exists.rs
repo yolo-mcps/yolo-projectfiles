@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use std::path::{Path, PathBuf, Component};
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -5,6 +6,8 @@ use rust_mcp_schema::{
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use super::utils::get_project_root_validated;
+
+const TOOL_NAME: &str = "exists";
 
 #[mcp_tool(
     name = "exists",
@@ -22,16 +25,17 @@ impl ExistsTool {
         
         // Use validate_path but don't require the path to exist
         let absolute_path = crate::config::normalize_path(&self.path)
-            .map_err(|e| CallToolError::unknown_tool(e))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &e)))?;
         
         // Note: We don't use canonicalize() here because it fails if the path doesn't exist
         // Instead, we normalize the path and check if it's within the project
         let normalized_path = normalize_path(&absolute_path);
         
         if !normalized_path.starts_with(&project_root) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
@@ -59,7 +63,7 @@ impl ExistsTool {
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
                 serde_json::to_string_pretty(&result_json)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to serialize result: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
                 None,
             ))],
             is_error: Some(false),

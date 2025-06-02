@@ -8,7 +8,11 @@ use std::time::SystemTime;
 use tokio::fs;
 use glob::{Pattern, MatchOptions};
 use chrono::{DateTime, Local};
-use crate::config::get_project_root;
+use async_trait::async_trait;
+use crate::config::tool_errors;
+use crate::context::{StatefulTool, ToolContext};
+
+const TOOL_NAME: &str = "list";
 
 #[mcp_tool(
     name = "list",
@@ -55,13 +59,14 @@ struct FileEntry {
     mode: u32,
 }
 
-impl ListTool {
-    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
-        let project_root = get_project_root()
-            .map_err(|e| CallToolError::unknown_tool(e))?;
+#[async_trait]
+impl StatefulTool for ListTool {
+    async fn call_with_context(self, context: &ToolContext) -> Result<CallToolResult, CallToolError> {
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
         let canonical_project_root = project_root.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to canonicalize project root: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -71,28 +76,29 @@ impl ListTool {
         };
         
         let canonical_path = absolute_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
         
         if !canonical_path.starts_with(&canonical_project_root) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
         let path = &canonical_path;
 
         if !path.is_dir() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path is not a directory: {}",
-                self.path
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Path is not a directory: {}", self.path)
             )));
         }
 
         // Prepare glob pattern if provided
         let glob_pattern = self.filter.as_ref().map(|f| {
             Pattern::new(f)
-                .map_err(|e| CallToolError::unknown_tool(format!("Invalid filter pattern '{}': {}", f, e)))
+                .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, f, &e.to_string())))
         }).transpose()?;
 
         let mut entries = if self.recursive {
@@ -113,9 +119,9 @@ impl ListTool {
                 }
             }),
             "modified" => entries.sort_by(|a, b| a.modified.cmp(&b.modified)),
-            _ => return Err(CallToolError::unknown_tool(format!(
-                "Invalid sort_by value '{}'. Use 'name', 'size', or 'modified'",
-                self.sort_by
+            _ => return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Invalid sort_by value '{}'. Use 'name', 'size', or 'modified'", self.sort_by)
             ))),
         }
 
@@ -140,11 +146,18 @@ impl ListTool {
             meta: None,
         })
     }
+}
+
+impl ListTool {
+    pub async fn call(self) -> Result<CallToolResult, CallToolError> {
+        let context = ToolContext::default();
+        StatefulTool::call_with_context(self, &context).await
+    }
 
     async fn list_directory(&self, path: &Path, glob_pattern: &Option<Pattern>) -> Result<Vec<FileEntry>, CallToolError> {
         let mut entries_stream = fs::read_dir(path)
             .await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e))))?;
 
         let mut entries = Vec::new();
         
@@ -152,7 +165,7 @@ impl ListTool {
             let entry = match entries_stream.next_entry().await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
-                Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read directory entry: {}", e))),
+                Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory entry: {}", e)))),
             };
             
             let file_name = entry.file_name().to_string_lossy().to_string();
@@ -175,7 +188,7 @@ impl ListTool {
             }
 
             let metadata = entry.metadata().await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata for '{}': {}", file_name, e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata for '{}': {}", file_name, e))))?;
 
             entries.push(FileEntry {
                 name: file_name,
@@ -183,7 +196,7 @@ impl ListTool {
                 is_dir: metadata.is_dir(),
                 size: metadata.len(),
                 modified: metadata.modified()
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to get modified time: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get modified time: {}", e))))?,
                 #[cfg(unix)]
                 mode: {
                     use std::os::unix::fs::MetadataExt;
@@ -202,13 +215,13 @@ impl ListTool {
         while let Some(current_dir) = dirs_to_process.pop() {
             let mut entries_stream = fs::read_dir(&current_dir)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory '{}': {}", current_dir.display(), e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory '{}': {}", current_dir.display(), e))))?;
 
             loop {
                 let entry = match entries_stream.next_entry().await {
                     Ok(Some(entry)) => entry,
                     Ok(None) => break,
-                    Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read directory entry: {}", e))),
+                    Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory entry: {}", e)))),
                 };
                 
                 let file_name = entry.file_name().to_string_lossy().to_string();
@@ -219,7 +232,7 @@ impl ListTool {
                 }
 
                 let metadata = entry.metadata().await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata for '{}': {}", file_name, e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata for '{}': {}", file_name, e))))?;
 
                 let entry_path = entry.path();
                 
@@ -250,7 +263,7 @@ impl ListTool {
                         is_dir: true,
                         size: 0, // Directories don't have meaningful size
                         modified: metadata.modified()
-                            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get modified time: {}", e)))?,
+                            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get modified time: {}", e))))?,
                         #[cfg(unix)]
                         mode: {
                             use std::os::unix::fs::MetadataExt;
@@ -267,7 +280,7 @@ impl ListTool {
                         is_dir: false,
                         size: metadata.len(),
                         modified: metadata.modified()
-                            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get modified time: {}", e)))?,
+                            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get modified time: {}", e))))?,
                         #[cfg(unix)]
                         mode: {
                             use std::os::unix::fs::MetadataExt;

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use rust_mcp_schema::{CallToolResult, schema_utils::CallToolError};
 use std::any::Any;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -11,6 +12,8 @@ pub struct ToolContext {
     /// Custom state bag for storing arbitrary typed data
     /// Use TypeId as key for type-safe retrieval
     pub custom_state: Arc<Mutex<HashMap<std::any::TypeId, Box<dyn Any + Send + Sync>>>>,
+    /// Optional override for project root (useful for testing)
+    pub project_root_override: Option<PathBuf>,
 }
 
 impl ToolContext {
@@ -18,6 +21,23 @@ impl ToolContext {
     pub fn new() -> Self {
         Self {
             custom_state: Arc::new(Mutex::new(HashMap::new())),
+            project_root_override: None,
+        }
+    }
+
+    /// Create a new tool context with a project root override (useful for testing)
+    pub fn with_project_root(project_root: PathBuf) -> Self {
+        Self {
+            custom_state: Arc::new(Mutex::new(HashMap::new())),
+            project_root_override: Some(project_root),
+        }
+    }
+
+    /// Get the effective project root (override or current directory)
+    pub fn get_project_root(&self) -> Result<PathBuf, std::io::Error> {
+        match &self.project_root_override {
+            Some(root) => Ok(root.clone()),
+            None => std::env::current_dir(),
         }
     }
 

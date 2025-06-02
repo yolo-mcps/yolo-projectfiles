@@ -1,4 +1,5 @@
 use crate::context::{StatefulTool, ToolContext};
+use crate::config::tool_errors;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -9,6 +10,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use glob::{glob_with, MatchOptions};
+
+const TOOL_NAME: &str = "delete";
 
 #[mcp_tool(
     name = "delete", 
@@ -39,13 +42,14 @@ impl StatefulTool for DeleteTool {
         context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
         if !self.confirm && !self.force {
-            return Err(CallToolError::unknown_tool(
-                "Deletion requires confirmation. Set confirm=true or force=true to proceed.".to_string()
-            ));
+            return Err(CallToolError::from(tool_errors::operation_not_permitted(
+                TOOL_NAME,
+                "Deletion requires confirmation. Set confirm=true or force=true to proceed."
+            )));
         }
         
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         if self.pattern {
             // Pattern matching mode - treat path as glob pattern
@@ -62,15 +66,15 @@ impl StatefulTool for DeleteTool {
             };
             
             let paths: Vec<PathBuf> = glob_with(&pattern_path, options)
-                .map_err(|e| CallToolError::unknown_tool(format!("Invalid pattern '{}': {}", self.path, e)))?
+                .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.path, &e.to_string())))?
                 .filter_map(Result::ok)
                 .filter(|p| p.starts_with(&current_dir) && p != &current_dir)
                 .collect();
             
             if paths.is_empty() {
-                return Err(CallToolError::unknown_tool(format!(
-                    "No files found matching pattern: {}",
-                    self.path
+                return Err(CallToolError::from(tool_errors::file_not_found(
+                    TOOL_NAME,
+                    &format!("No files found matching pattern: {}", self.path)
                 )));
             }
             
@@ -80,23 +84,23 @@ impl StatefulTool for DeleteTool {
             
             for path in paths {
                 let metadata = fs::metadata(&path).await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata for '{}': {}", path.display(), e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata for '{}': {}", path.display(), e))))?;
                 
                 if metadata.is_file() {
                     fs::remove_file(&path).await
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to delete file '{}': {}", path.display(), e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete file '{}': {}", path.display(), e))))?;
                     deleted_paths.push((path.clone(), "file"));
                     _total_deleted += 1;
                 } else if metadata.is_dir() && self.recursive {
                     let count = count_entries(&path).await?;
                     fs::remove_dir_all(&path).await
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to delete directory '{}': {}", path.display(), e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete directory '{}': {}", path.display(), e))))?;
                     deleted_paths.push((path.clone(), "directory"));
                     _total_deleted += count;
                 } else if metadata.is_dir() {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Directory '{}' is not empty. Use recursive=true to delete non-empty directories.",
-                        path.display()
+                    return Err(CallToolError::from(tool_errors::invalid_input(
+                        TOOL_NAME,
+                        &format!("Directory '{}' is not empty. Use recursive=true to delete non-empty directories.", path.display())
                     )));
                 }
                 
@@ -137,32 +141,32 @@ impl StatefulTool for DeleteTool {
         };
         
         let canonical_path = absolute_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path '{}': {}", self.path, e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
         
         if !canonical_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
         // Don't allow deleting the project root
         if canonical_path == current_dir {
-            return Err(CallToolError::unknown_tool(
-                "Cannot delete the project root directory".to_string()
-            ));
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Cannot delete the project root directory"
+            )));
         }
         
         if !canonical_path.exists() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path not found: {}",
-                self.path
-            )));
+            return Err(CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)));
         }
         
         let metadata = fs::metadata(&canonical_path)
             .await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
         
         let deleted_count;
         let file_type;
@@ -171,7 +175,7 @@ impl StatefulTool for DeleteTool {
             file_type = "file";
             fs::remove_file(&canonical_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to delete file: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete file: {}", e))))?;
             deleted_count = 1;
         } else if metadata.is_dir() {
             file_type = "directory";
@@ -179,28 +183,30 @@ impl StatefulTool for DeleteTool {
                 deleted_count = count_entries(&canonical_path).await?;
                 fs::remove_dir_all(&canonical_path)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to delete directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete directory: {}", e))))?;
             } else {
                 // Check if directory is empty
                 let mut entries = fs::read_dir(&canonical_path)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e))))?;
                 
-                if entries.next_entry().await.map_err(|e| CallToolError::unknown_tool(format!("Failed to check directory: {}", e)))?.is_some() {
-                    return Err(CallToolError::unknown_tool(
-                        "Directory is not empty. Set recursive=true to delete non-empty directories.".to_string()
-                    ));
+                if entries.next_entry().await.map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to check directory: {}", e))))?.is_some() {
+                    return Err(CallToolError::from(tool_errors::invalid_input(
+                        TOOL_NAME,
+                        "Directory is not empty. Set recursive=true to delete non-empty directories."
+                    )));
                 }
                 
                 fs::remove_dir(&canonical_path)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to delete empty directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete empty directory: {}", e))))?;
                 deleted_count = 1;
             }
         } else {
-            return Err(CallToolError::unknown_tool(
-                "Path is neither a file nor a directory".to_string()
-            ));
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "Path is neither a file nor a directory"
+            )));
         }
         
         // Remove from tracking
@@ -243,13 +249,13 @@ fn count_entries(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Outpu
     let mut count = 1; // Count the directory itself
     let mut entries = fs::read_dir(path)
         .await
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e))))?;
     
     loop {
         match entries.next_entry().await {
             Ok(Some(entry)) => {
                 let file_type = entry.file_type().await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to get file type: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file type: {}", e))))?;
                 
                 if file_type.is_dir() {
                     count += Box::pin(count_entries(&entry.path())).await?;
@@ -258,7 +264,7 @@ fn count_entries(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Outpu
                 }
             }
             Ok(None) => break,
-            Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read entry: {}", e))),
+            Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read entry: {}", e)))),
         }
     }
     

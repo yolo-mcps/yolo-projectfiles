@@ -8,6 +8,9 @@ use tokio::fs;
 use glob::Pattern;
 use chrono::{Local, Duration};
 use std::time::SystemTime;
+use crate::config::tool_errors;
+
+const TOOL_NAME: &str = "find";
 
 #[mcp_tool(
     name = "find",
@@ -70,7 +73,7 @@ struct SearchResult {
 impl FindTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let search_path = Path::new(&self.path);
         let absolute_search_path = if search_path.is_absolute() {
@@ -81,12 +84,13 @@ impl FindTool {
         
         // Validate search path is within project
         let canonical_search_path = absolute_search_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve search path '{}': {}", self.path, e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
         
         if !canonical_search_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Search path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Search path is outside the project directory"
             )));
         }
         
@@ -94,17 +98,17 @@ impl FindTool {
         let name_pattern = self.name_pattern.as_ref()
             .map(|p| Pattern::new(p))
             .transpose()
-            .map_err(|e| CallToolError::unknown_tool(format!("Invalid name pattern: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.name_pattern.as_ref().unwrap_or(&"".to_string()), &e.to_string())))?;
         
         let size_filter = self.size_filter.as_ref()
             .map(|f| parse_size_filter(f))
             .transpose()
-            .map_err(|e| CallToolError::unknown_tool(format!("Invalid size filter: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Invalid size filter: {}", e))))?;
         
         let date_filter = self.date_filter.as_ref()
             .map(|f| parse_date_filter(f))
             .transpose()
-            .map_err(|e| CallToolError::unknown_tool(format!("Invalid date filter: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Invalid date filter: {}", e))))?;
         
         // Perform search
         let mut results = Vec::new();
@@ -187,14 +191,14 @@ impl FindTool {
         
         let mut entries = match fs::read_dir(dir).await {
             Ok(entries) => entries,
-            Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read directory: {}", e))),
+            Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e)))),
         };
         
         loop {
             let entry = match entries.next_entry().await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
-                Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to read entry: {}", e))),
+                Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read entry: {}", e)))),
             };
             
             *search_count += 1;
@@ -202,7 +206,7 @@ impl FindTool {
             let path = entry.path();
             let metadata = match entry.metadata().await {
                 Ok(metadata) => metadata,
-                Err(e) => return Err(CallToolError::unknown_tool(format!("Failed to get metadata: {}", e))),
+                Err(e) => return Err(CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata: {}", e)))),
             };
             
             let relative_path = path.strip_prefix(project_root)

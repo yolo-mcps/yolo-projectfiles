@@ -2,7 +2,7 @@ use mcp_projectfiles_core::tools::{ListTool, GrepTool};
 use mcp_projectfiles_core::context::ToolContext;
 use mcp_projectfiles_core::StatefulTool;
 use mcp_projectfiles_core::protocol::CallToolResultContentItem;
-use mcp_projectfiles_core::config::{init_project_root, reset_project_root};
+
 use tempfile::TempDir;
 use std::fs;
 use serial_test::serial;
@@ -15,21 +15,20 @@ fn extract_text_content(result: &mcp_projectfiles_core::CallToolResult) -> Strin
 }
 
 /// Set up a test with a temporary directory as the project root
-fn setup_test_env() -> TempDir {
+fn setup_test_env() -> (TempDir, ToolContext) {
     // Create a new temp directory for this test
     let temp_dir = TempDir::new().unwrap();
     
-    // Reset and re-initialize project root for this test
-    reset_project_root();
-    init_project_root(temp_dir.path().to_path_buf());
+    // Create context with project root override
+    let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
     
-    temp_dir
+    (temp_dir, context)
 }
 
 #[tokio::test]
 #[serial]
 async fn test_list_tool_basic() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
     
     // Create test files
@@ -49,7 +48,7 @@ async fn test_list_tool_basic() {
         show_metadata: false,
     };
     
-    let result = tool.call().await.unwrap();
+    let result = tool.call_with_context(&context).await.unwrap();
     let output = extract_text_content(&result);
     assert!(output.contains("[FILE] file1.txt"));
     assert!(output.contains("[FILE] file2.rs"));
@@ -61,7 +60,7 @@ async fn test_list_tool_basic() {
 #[tokio::test]
 #[serial]
 async fn test_list_tool_recursive() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
     
     // Create nested structure
@@ -79,7 +78,7 @@ async fn test_list_tool_recursive() {
         show_metadata: false,
     };
     
-    let result = tool.call().await.unwrap();
+    let result = tool.call_with_context(&context).await.unwrap();
     let output = extract_text_content(&result);
     
     assert!(output.contains("a/file1.txt"));
@@ -90,7 +89,7 @@ async fn test_list_tool_recursive() {
 #[tokio::test]
 #[serial]
 async fn test_list_tool_filter() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
     
     fs::write(temp_path.join("test.rs"), "rust").unwrap();
@@ -107,7 +106,7 @@ async fn test_list_tool_filter() {
         show_metadata: false,
     };
     
-    let result = tool.call().await.unwrap();
+    let result = tool.call_with_context(&context).await.unwrap();
     let output = extract_text_content(&result);
     
     assert!(output.contains("test.rs"));
@@ -119,7 +118,7 @@ async fn test_list_tool_filter() {
 #[tokio::test]
 #[serial]
 async fn test_list_tool_sort_by_size() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
     
     fs::write(temp_path.join("small.txt"), "a").unwrap();
@@ -135,7 +134,7 @@ async fn test_list_tool_sort_by_size() {
         show_metadata: false,
     };
     
-    let result = tool.call().await.unwrap();
+    let result = tool.call_with_context(&context).await.unwrap();
     let output = extract_text_content(&result);
     let lines: Vec<&str> = output.lines().collect();
     
@@ -151,7 +150,7 @@ async fn test_list_tool_sort_by_size() {
 #[tokio::test]
 #[serial]
 async fn test_list_invalid_sort() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, _context) = setup_test_env();
     let _temp_path = temp_dir.path();
     
     let tool = ListTool {
@@ -172,12 +171,13 @@ async fn test_list_invalid_sort() {
 #[tokio::test]
 #[serial]
 async fn test_grep_tool_basic() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
-    let context = ToolContext::new();
     
     fs::write(temp_path.join("test.txt"), "hello world\nfoo bar\nhello again").unwrap();
     fs::write(temp_path.join("other.txt"), "no match here").unwrap();
+    
+
     
     let tool = GrepTool {
         pattern: "hello".to_string(),
@@ -186,8 +186,8 @@ async fn test_grep_tool_basic() {
         exclude: None,
         case_insensitive: false,
         show_line_numbers: true,
-        context_before: 0,
-        context_after: 0,
+        context_before: Some(0),
+        context_after: Some(0),
         max_results: 0, // 0 means no limit
     };
     
@@ -203,9 +203,8 @@ async fn test_grep_tool_basic() {
 #[tokio::test]
 #[serial]
 async fn test_grep_tool_case_insensitive() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
-    let context = ToolContext::new();
     
     fs::write(temp_path.join("test.txt"), "Hello World\nHELLO WORLD\nhello world").unwrap();
     
@@ -216,8 +215,8 @@ async fn test_grep_tool_case_insensitive() {
         exclude: None,
         case_insensitive: true,
         show_line_numbers: true,
-        context_before: 0,
-        context_after: 0,
+        context_before: Some(0),
+        context_after: Some(0),
         max_results: 0,
     };
     
@@ -232,9 +231,8 @@ async fn test_grep_tool_case_insensitive() {
 #[tokio::test]
 #[serial]
 async fn test_grep_tool_context() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
-    let context = ToolContext::new();
     
     fs::write(temp_path.join("test.txt"), "line1\nline2\nmatch\nline4\nline5").unwrap();
     
@@ -245,8 +243,8 @@ async fn test_grep_tool_context() {
         exclude: None,
         case_insensitive: false,
         show_line_numbers: true,
-        context_before: 1,
-        context_after: 1,
+        context_before: Some(1),
+        context_after: Some(1),
         max_results: 0,
     };
     
@@ -261,9 +259,8 @@ async fn test_grep_tool_context() {
 #[tokio::test]
 #[serial]
 async fn test_grep_tool_file_filter() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
-    let context = ToolContext::new();
     
     fs::write(temp_path.join("test.rs"), "fn main() { println!(\"match\"); }").unwrap();
     fs::write(temp_path.join("test.py"), "print('match')").unwrap();
@@ -276,8 +273,8 @@ async fn test_grep_tool_file_filter() {
         exclude: None,
         case_insensitive: false,
         show_line_numbers: true,
-        context_before: 0,
-        context_after: 0,
+        context_before: Some(0),
+        context_after: Some(0),
         max_results: 0,
     };
     
@@ -292,9 +289,8 @@ async fn test_grep_tool_file_filter() {
 #[tokio::test]
 #[serial]
 async fn test_grep_tool_max_results() {
-    let temp_dir = setup_test_env();
+    let (temp_dir, context) = setup_test_env();
     let temp_path = temp_dir.path();
-    let context = ToolContext::new();
     
     let content = "match\n".repeat(10);
     fs::write(temp_path.join("test.txt"), content).unwrap();
@@ -306,8 +302,8 @@ async fn test_grep_tool_max_results() {
         exclude: None,
         case_insensitive: false,
         show_line_numbers: true,
-        context_before: 0,
-        context_after: 0,
+        context_before: Some(0),
+        context_after: Some(0),
         max_results: 3,
     };
     

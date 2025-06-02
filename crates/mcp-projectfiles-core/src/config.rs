@@ -11,6 +11,52 @@ pub fn format_tool_error(tool_name: &str, message: &str) -> String {
     format!("{}:{} - {}", SERVER_NAME, tool_name, message)
 }
 
+/// Create tool-specific errors with proper typing
+pub mod tool_errors {
+    use crate::error::Error;
+    use super::SERVER_NAME;
+
+    /// Create a file not found error for a tool
+    pub fn file_not_found(tool: &str, path: &str) -> Error {
+        Error::file_not_found(SERVER_NAME, tool, path)
+    }
+
+    /// Create an access denied error for a tool
+    pub fn access_denied(tool: &str, path: &str, reason: &str) -> Error {
+        Error::access_denied(SERVER_NAME, tool, path, reason)
+    }
+
+    /// Create an invalid input error for a tool
+    pub fn invalid_input(tool: &str, message: &str) -> Error {
+        Error::invalid_input(SERVER_NAME, tool, message)
+    }
+
+    /// Create a binary file error for a tool
+    pub fn binary_file(tool: &str, path: &str) -> Error {
+        Error::binary_file(SERVER_NAME, tool, path)
+    }
+
+    /// Create a pattern error for a tool
+    pub fn pattern_error(tool: &str, pattern: &str, message: &str) -> Error {
+        Error::pattern_error(SERVER_NAME, tool, pattern, message)
+    }
+
+    /// Create an encoding error for a tool
+    pub fn encoding_error(tool: &str, path: &str, encoding: &str) -> Error {
+        Error::encoding_error(SERVER_NAME, tool, path, encoding)
+    }
+
+    /// Create an operation not permitted error for a tool
+    pub fn operation_not_permitted(tool: &str, message: &str) -> Error {
+        Error::operation_not_permitted(SERVER_NAME, tool, message)
+    }
+
+    /// Create a limit exceeded error for a tool
+    pub fn limit_exceeded(tool: &str, limit: &str, actual: &str) -> Error {
+        Error::limit_exceeded(SERVER_NAME, tool, limit, actual)
+    }
+}
+
 /// Initialize the project root directory
 /// 
 /// This should be called once at server startup. If not called,
@@ -103,8 +149,10 @@ pub fn normalize_path(path: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use serial_test::serial;
     
     #[test]
+    #[serial]
     fn test_project_root_initialization() {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_path_buf();
@@ -113,21 +161,30 @@ mod tests {
         
         let root = get_project_root().unwrap();
         assert_eq!(root, temp_path);
+        
+        // Clean up
+        reset_project_root();
     }
     
     #[test]
+    #[serial]
     fn test_is_within_project_root() {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_path_buf();
         
+        // Reset project root to ensure clean state and set test root
+        reset_project_root();
         init_project_root(temp_path.clone());
         
         // Test path within project root
         let inner_path = temp_path.join("subdir");
         assert!(is_within_project_root(&inner_path).unwrap());
         
-        // Test path outside project root
-        let outside_path = PathBuf::from("/tmp/outside");
+        // Test path outside project root - use the temp dir's parent to ensure it exists
+        let outside_path = temp_path.parent().unwrap().join("outside");
         assert!(!is_within_project_root(&outside_path).unwrap());
+        
+        // Clean up
+        reset_project_root();
     }
 }

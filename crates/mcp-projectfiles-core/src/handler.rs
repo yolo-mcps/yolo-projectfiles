@@ -73,7 +73,10 @@ impl CoreHandler {
 
         let tool = ProtocolTools::try_from(request.params.clone()).map_err(|e| {
             error!(tool_name, error = %e, "Failed to parse tool request");
-            CallToolError::unknown_tool(format!("Failed to parse tool request: {}", e))
+            CallToolError::new(ToolExecutionError {
+                tool_name: format!("projectfiles:{}", tool_name),
+                message: format!("Failed to parse tool request: {}", e),
+            })
         })?;
 
         info!(tool_name, "Executing tool");
@@ -87,8 +90,9 @@ impl CoreHandler {
             ProtocolTools::DeleteTool(delete) => delete.call_with_context(&self.context).await,
             ProtocolTools::GrepTool(grep) => grep.call_with_context(&self.context).await,
             
+            ProtocolTools::ListTool(list) => list.call_with_context(&self.context).await,
+            
             // Stateless file tools - call directly
-            ProtocolTools::ListTool(list) => list.call().await,
             ProtocolTools::MkdirTool(mkdir) => mkdir.call().await,
             ProtocolTools::TouchTool(touch) => touch.call().await,
             ProtocolTools::ChmodTool(chmod) => chmod.call().await,

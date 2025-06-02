@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -5,6 +6,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
+
+const TOOL_NAME: &str = "mkdir";
 
 #[mcp_tool(
     name = "mkdir", 
@@ -29,7 +32,7 @@ fn default_create_parents() -> bool {
 impl MkdirTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -43,11 +46,12 @@ impl MkdirTool {
         // For new paths, validate each component
         if absolute_path.exists() {
             let canonical_path = absolute_path.canonicalize()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
             if !canonical_path.starts_with(&current_dir) {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Access denied: Path '{}' is outside the project directory",
-                    self.path
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    TOOL_NAME,
+                    &self.path,
+                    "Path is outside the project directory"
                 )));
             }
         } else {
@@ -56,11 +60,12 @@ impl MkdirTool {
             while let Some(parent) = check_path.parent() {
                 if parent.exists() {
                     let canonical_parent = parent.canonicalize()
-                        .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve parent directory: {}", e)))?;
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve parent directory: {}", e))))?;
                     if !canonical_parent.starts_with(&current_dir) {
-                        return Err(CallToolError::unknown_tool(format!(
-                            "Access denied: Path '{}' would be outside the project directory",
-                            self.path
+                        return Err(CallToolError::from(tool_errors::access_denied(
+                            TOOL_NAME,
+                            &self.path,
+                            "Path would be outside the project directory"
                         )));
                     }
                     break;
@@ -88,9 +93,10 @@ impl MkdirTool {
                 });
             
             if !current_dir.join(&normalized).starts_with(&current_dir) {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Access denied: Path '{}' would be outside the project directory",
-                    self.path
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    TOOL_NAME,
+                    &self.path,
+                    "Path would be outside the project directory"
                 )));
             }
         }
@@ -99,7 +105,7 @@ impl MkdirTool {
         if absolute_path.exists() {
             let metadata = fs::metadata(&absolute_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read metadata: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
             
             if metadata.is_dir() {
                 return Ok(CallToolResult {
@@ -110,9 +116,9 @@ impl MkdirTool {
                     meta: None,
                 });
             } else {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Path '{}' already exists as a file",
-                    self.path
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Path '{}' already exists as a file", self.path)
                 )));
             }
         }
@@ -121,11 +127,11 @@ impl MkdirTool {
         if self.parents {
             fs::create_dir_all(&absolute_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to create directory: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create directory: {}", e))))?;
         } else {
             fs::create_dir(&absolute_path)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to create directory: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create directory: {}", e))))?;
         }
         
         // Set permissions if specified (Unix-like systems only)
@@ -137,11 +143,11 @@ impl MkdirTool {
                 let permissions = std::fs::Permissions::from_mode(mode);
                 fs::set_permissions(&absolute_path, permissions)
                     .await
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to set permissions: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to set permissions: {}", e))))?;
             } else {
-                return Err(CallToolError::unknown_tool(format!(
-                    "Invalid mode '{}'. Must be an octal number like '755'",
-                    mode_str
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Invalid mode '{}'. Must be an octal number like '755'", mode_str)
                 )));
             }
         }

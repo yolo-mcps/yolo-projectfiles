@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -6,6 +7,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use similar::{ChangeTag, TextDiff};
+
+const TOOL_NAME: &str = "diff";
 
 #[mcp_tool(
     name = "diff",
@@ -35,7 +38,7 @@ fn default_context_lines() -> u32 {
 impl DiffTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         // Validate and canonicalize file1
         let file1_path = if Path::new(&self.file1).is_absolute() {
@@ -45,12 +48,13 @@ impl DiffTool {
         };
         
         let canonical_file1 = file1_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve file1 '{}': {}", self.file1, e)))?;
+            .map_err(|_| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.file1)))?;
         
         if !canonical_file1.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: File1 '{}' is outside the project directory",
-                self.file1
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.file1,
+                "File1 is outside the project directory"
             )));
         }
         
@@ -62,21 +66,22 @@ impl DiffTool {
         };
         
         let canonical_file2 = file2_path.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve file2 '{}': {}", self.file2, e)))?;
+            .map_err(|_| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.file2)))?;
         
         if !canonical_file2.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: File2 '{}' is outside the project directory",
-                self.file2
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.file2,
+                "File2 is outside the project directory"
             )));
         }
         
         // Read both files
         let content1 = fs::read_to_string(&canonical_file1).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read file1 '{}': {}", self.file1, e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file1 '{}': {}", self.file1, e))))?;
         
         let content2 = fs::read_to_string(&canonical_file2).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read file2 '{}': {}", self.file2, e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file2 '{}': {}", self.file2, e))))?;
         
         // Process content if ignoring whitespace
         let (text1, text2) = if self.ignore_whitespace {

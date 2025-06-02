@@ -95,6 +95,7 @@ The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI pa
 - All tools should specify that optional parameters should not be passed.
 - Any tool call errors should be prefixed with "Error: server_name:tool_name - Example message". Example:
   - "Error: projectfiles:edit - File not found /path/to/file"
+- All tool errors should be produced with thiserror Errors.
 - Always prefer jj over git for SCM operations and commits
 
 ## Dogfooding

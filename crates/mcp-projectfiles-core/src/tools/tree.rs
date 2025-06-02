@@ -1,3 +1,4 @@
+use crate::config::tool_errors;
 use std::path::Path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -6,6 +7,8 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use glob::Pattern;
+
+const TOOL_NAME: &str = "tree";
 
 #[mcp_tool(
     name = "tree",
@@ -42,34 +45,35 @@ impl TreeTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         // Get project root and resolve path
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let target_path = current_dir.join(&self.path);
         
         // Security check - ensure path is within project directory
         let normalized_path = target_path
             .canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
             
         if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
         // Check if path exists and is a directory
         if !normalized_path.exists() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path '{}' does not exist",
-                self.path
+            return Err(CallToolError::from(tool_errors::file_not_found(
+                TOOL_NAME,
+                &self.path
             )));
         }
         
         if !normalized_path.is_dir() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path '{}' is not a directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Path '{}' is not a directory", self.path)
             )));
         }
         
@@ -139,14 +143,14 @@ async fn build_tree(
     
     // Read directory entries
     let mut entries = fs::read_dir(dir).await
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read directory: {}", e)))?;
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file: {}", e))))?;
     
     let mut items = Vec::new();
     
     // Collect all entries first to avoid Send issues
     let mut dir_entries = Vec::new();
     while let Some(entry) = entries.next_entry().await
-        .map_err(|e| CallToolError::unknown_tool(format!("Failed to read entry: {}", e)))? {
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file: {}", e))))? {
         dir_entries.push(entry);
     }
     
@@ -162,7 +166,7 @@ async fn build_tree(
         
         // Get metadata
         let metadata = entry.metadata().await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get metadata: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata: {}", e))))?;
         
         // Filter directories if dirs_only is set
         if request.dirs_only && !metadata.is_dir() {
@@ -172,7 +176,7 @@ async fn build_tree(
         // Filter by pattern if provided
         if let Some(pattern_str) = &request.pattern_filter {
             let pattern = Pattern::new(pattern_str)
-                .map_err(|e| CallToolError::unknown_tool(format!("Invalid pattern '{}': {}", pattern_str, e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, pattern_str, &format!("Invalid pattern: {}", e))))?;
             if !pattern.matches(&name_str) {
                 continue;
             }

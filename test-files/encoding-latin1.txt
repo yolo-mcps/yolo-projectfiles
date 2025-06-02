@@ -1,0 +1,2 @@
+Latin1 test file
+Special chars: אבגדהו חסü

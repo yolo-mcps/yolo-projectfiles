@@ -1,9 +1,12 @@
+use crate::config::tool_errors;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+
+const TOOL_NAME: &str = "wc";
 
 #[mcp_tool(
     name = "wc",
@@ -39,45 +42,46 @@ impl WcTool {
     pub async fn call(self) -> Result<CallToolResult, CallToolError> {
         // Get current directory and resolve path
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         let target_path = current_dir.join(&self.path);
         
         // Security check - ensure path is within project directory
         let normalized_path = target_path
             .canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve path: {}", e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
             
         if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Path '{}' is outside the project directory",
-                self.path
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.path,
+                "Path is outside the project directory"
             )));
         }
         
         // Check if file exists
         if !normalized_path.exists() {
-            return Err(CallToolError::unknown_tool(format!(
-                "File '{}' does not exist",
-                self.path
+            return Err(CallToolError::from(tool_errors::file_not_found(
+                TOOL_NAME,
+                &self.path
             )));
         }
         
         if !normalized_path.is_file() {
-            return Err(CallToolError::unknown_tool(format!(
-                "Path '{}' is not a file",
-                self.path
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Path '{}' is not a file", self.path)
             )));
         }
         
         // Read file contents
         let contents = fs::read_to_string(&normalized_path).await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to read file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read file: {}", e))))?;
         
         // Get byte count if requested
         let byte_count = if self.count_bytes {
             fs::metadata(&normalized_path).await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to get file metadata: {}", e)))?
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file metadata: {}", e))))?
                 .len()
         } else {
             0
@@ -134,7 +138,7 @@ impl WcTool {
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
                 serde_json::to_string_pretty(&result)
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to serialize result: {}", e)))?,
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
                 None,
             ))],
             is_error: Some(false),

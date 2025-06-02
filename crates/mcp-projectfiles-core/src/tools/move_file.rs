@@ -1,4 +1,5 @@
 use crate::context::{StatefulTool, ToolContext};
+use crate::config::tool_errors;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -8,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+
+const TOOL_NAME: &str = "move";
 
 #[mcp_tool(
     name = "move", 
@@ -38,7 +41,7 @@ impl StatefulTool for MoveTool {
         context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
         let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to get current directory: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
         
         // Process source path
         let source_path = Path::new(&self.source);
@@ -49,12 +52,13 @@ impl StatefulTool for MoveTool {
         };
         
         let canonical_source = absolute_source.canonicalize()
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve source path '{}': {}", self.source, e)))?;
+            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.source)))?;
         
         if !canonical_source.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Source path '{}' is outside the project directory",
-                self.source
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.source,
+                "Source path is outside the project directory"
             )));
         }
         
@@ -69,16 +73,17 @@ impl StatefulTool for MoveTool {
         // For destination, we can't canonicalize if it doesn't exist yet
         let canonical_dest = if absolute_dest.exists() {
             absolute_dest.canonicalize()
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve destination path '{}': {}", self.destination, e)))?
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination path '{}': {}", self.destination, e))))?
         } else {
             // Ensure parent exists and is within project
             if let Some(parent) = absolute_dest.parent() {
                 let canonical_parent = parent.canonicalize()
-                    .map_err(|e| CallToolError::unknown_tool(format!("Failed to resolve destination parent directory: {}", e)))?;
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination parent directory: {}", e))))?;
                 if !canonical_parent.starts_with(&current_dir) {
-                    return Err(CallToolError::unknown_tool(format!(
-                        "Access denied: Destination path '{}' would be outside the project directory",
-                        self.destination
+                    return Err(CallToolError::from(tool_errors::access_denied(
+                        TOOL_NAME,
+                        &self.destination,
+                        "Destination path would be outside the project directory"
                     )));
                 }
             }
@@ -86,17 +91,18 @@ impl StatefulTool for MoveTool {
         };
         
         if !canonical_dest.starts_with(&current_dir) {
-            return Err(CallToolError::unknown_tool(format!(
-                "Access denied: Destination path '{}' is outside the project directory",
-                self.destination
+            return Err(CallToolError::from(tool_errors::access_denied(
+                TOOL_NAME,
+                &self.destination,
+                "Destination path is outside the project directory"
             )));
         }
         
         // Check if destination exists
         if canonical_dest.exists() && !self.overwrite {
-            return Err(CallToolError::unknown_tool(format!(
-                "Destination '{}' already exists. Set overwrite=true to replace it.",
-                self.destination
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Destination '{}' already exists. Set overwrite=true to replace it.", self.destination)
             )));
         }
         
@@ -104,13 +110,13 @@ impl StatefulTool for MoveTool {
         if let Some(parent) = canonical_dest.parent() {
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to create parent directory: {}", e)))?;
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create parent directory: {}", e))))?;
         }
         
         // Get metadata before move if preservation is requested
         let metadata = if self.preserve_metadata {
             Some(fs::metadata(&canonical_source).await
-                .map_err(|e| CallToolError::unknown_tool(format!("Failed to read source metadata: {}", e)))?)
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?)
         } else {
             None
         };
@@ -118,7 +124,7 @@ impl StatefulTool for MoveTool {
         // Perform the move
         fs::rename(&canonical_source, &canonical_dest)
             .await
-            .map_err(|e| CallToolError::unknown_tool(format!("Failed to move file: {}", e)))?;
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to move file: {}", e))))?;
         
         // Restore metadata if requested and available
         if let Some(meta) = metadata {
