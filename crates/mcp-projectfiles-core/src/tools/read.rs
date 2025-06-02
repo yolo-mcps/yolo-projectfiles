@@ -302,51 +302,7 @@ mod tests {
         }
     }
 
-    fn create_read_tool_with_absolute_path(file_path: &std::path::Path, temp_dir: &TempDir) -> ReadTool {
-        // Create a relative path from temp_dir to file_path
-        let relative_path = file_path.strip_prefix(temp_dir.path()).unwrap();
-        ReadTool {
-            path: relative_path.to_string_lossy().to_string(),
-            offset: 0,
-            limit: 0,
-            skip_binary_check: false,
-            tail: false,
-            pattern: None,
-            pattern_case_insensitive: false,
-            encoding: "utf-8".to_string(),
-        }
-    }
 
-    // Helper struct to automatically restore current directory
-    struct ScopedDirectoryChange {
-        original_dir: PathBuf,
-    }
-
-    impl ScopedDirectoryChange {
-        fn new(new_dir: &std::path::Path) -> std::io::Result<Self> {
-            let original_dir = std::env::current_dir()?;
-            std::env::set_current_dir(new_dir)?;
-            Ok(ScopedDirectoryChange { original_dir })
-        }
-    }
-
-    impl Drop for ScopedDirectoryChange {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.original_dir);
-        }
-    }
-
-    // Helper function for isolated testing
-    async fn test_in_temp_dir<F, Fut>(test_fn: F) 
-    where
-        F: FnOnce(TempDir) -> Fut,
-        Fut: std::future::Future<Output = ()>,
-    {
-        let temp_dir = TempDir::new().unwrap();
-        let _dir_guard = ScopedDirectoryChange::new(temp_dir.path()).unwrap();
-        test_fn(temp_dir).await;
-        // Directory is automatically restored when _dir_guard is dropped
-    }
 
     // Clean test helper that doesn't change global state
     async fn test_read_tool_in_dir(temp_dir: &TempDir, tool: ReadTool) -> Result<CallToolResult, CallToolError> {
@@ -483,7 +439,7 @@ mod tests {
         let file_path = temp_dir.path().join("binary.bin");
         async_fs::write(&file_path, binary_content).await.unwrap();
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("binary.bin");
         tool.skip_binary_check = true;
@@ -522,7 +478,7 @@ mod tests {
         let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
         let _file_path = create_test_file(&temp_dir, "limit_test.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("limit_test.txt");
         tool.limit = 2; // Read only 2 lines
@@ -545,7 +501,7 @@ mod tests {
         let content = "Line 1\nLine 2";
         let _file_path = create_test_file(&temp_dir, "short.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("short.txt");
         tool.offset = 10; // Beyond file length
@@ -566,7 +522,7 @@ mod tests {
         let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
         let _file_path = create_test_file(&temp_dir, "tail_test.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("tail_test.txt");
         tool.tail = true;
@@ -589,7 +545,7 @@ mod tests {
         let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
         let _file_path = create_test_file(&temp_dir, "tail_offset.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("tail_offset.txt");
         tool.tail = true;
@@ -636,7 +592,7 @@ mod tests {
         let content = "TODO: fix bug\ntodo: add tests\nDone: complete feature";
         let _file_path = create_test_file(&temp_dir, "case_test.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("case_test.txt");
         tool.pattern = Some("todo".to_string());
@@ -660,7 +616,7 @@ mod tests {
         let content = "Line 1\nLine 2\nLine 3";
         let _file_path = create_test_file(&temp_dir, "no_match.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("no_match.txt");
         tool.pattern = Some("nonexistent".to_string());
@@ -680,7 +636,7 @@ mod tests {
         let content = "Line 1\nLine 2";
         let _file_path = create_test_file(&temp_dir, "regex_test.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("regex_test.txt");
         tool.pattern = Some("[invalid regex".to_string()); // Invalid regex
@@ -699,7 +655,7 @@ mod tests {
         let content = "UTF-8 with special chars: àáâãäå ñúü";
         let _file_path = create_test_file(&temp_dir, "utf8.txt", content).await;
         
-        std::env::set_current_dir(temp_dir.path()).unwrap();
+
         
         let mut tool = create_read_tool("utf8.txt");
         tool.encoding = "utf-8".to_string();

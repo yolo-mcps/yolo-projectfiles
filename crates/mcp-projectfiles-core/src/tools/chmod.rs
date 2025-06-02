@@ -1,4 +1,5 @@
 use crate::config::tool_errors;
+use crate::tools::utils::{format_path, format_count};
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -113,11 +114,14 @@ impl ChmodTool {
                 }
                 
                 let summary = format!(
-                    "Successfully changed permissions for {} {} matching pattern '{}':\n{}",
-                    changed_paths.len(),
-                    if changed_paths.len() == 1 { "path" } else { "paths" },
+                    "Changed permissions to {} for {} matching pattern '{}':\n{}",
+                    self.mode,
+                    format_count(changed_paths.len(), "path", "paths"),
                     self.path,
-                    changed_paths.join("\n")
+                    changed_paths.iter()
+                        .map(|p| format!("  {}", format_path(Path::new(p))))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 );
                 
                 return Ok(CallToolResult {
@@ -180,15 +184,22 @@ impl ChmodTool {
                 changed_count = chmod_recursive(&canonical_path, mode).await?;
             }
             
+            // Format path relative to project root
+            let relative_path = canonical_path.strip_prefix(&current_dir)
+                .unwrap_or(&canonical_path);
+            
             let message = if self.recursive && changed_count > 1 {
                 format!(
-                    "Successfully changed permissions to {} for '{}' ({} items)",
-                    self.mode, self.path, changed_count
+                    "Changed permissions to {} for {} ({})",
+                    self.mode, 
+                    format_path(relative_path), 
+                    format_count(changed_count, "item", "items")
                 )
             } else {
                 format!(
-                    "Successfully changed permissions to {} for '{}'",
-                    self.mode, self.path
+                    "Changed permissions to {} for {}",
+                    self.mode, 
+                    format_path(relative_path)
                 )
             };
             

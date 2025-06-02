@@ -1,4 +1,5 @@
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_path};
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -82,19 +83,22 @@ impl HashTool {
         // In a real implementation, we would use proper crypto libraries
         let hash = calculate_simple_hash(&normalized_path, &algorithm).await?;
         
-        // Create result
-        let result = serde_json::json!({
-            "path": self.path,
-            "algorithm": algorithm,
-            "hash": hash,
-            "size": file_size,
-            "size_human": format_size(file_size),
-        });
+        // Format path relative to project root
+        let relative_path = normalized_path.strip_prefix(&current_dir)
+            .unwrap_or(&normalized_path);
+        
+        // Create human-readable output
+        let output = format!(
+            "{} hash of {} ({}):\n{}",
+            algorithm.to_uppercase(),
+            format_path(relative_path),
+            format_size(file_size),
+            hash
+        );
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                serde_json::to_string_pretty(&result)
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
+                output,
                 None,
             ))],
             is_error: Some(false),
@@ -167,23 +171,6 @@ async fn calculate_simple_hash(path: &std::path::Path, algorithm: &str) -> Resul
     hex_string.truncate(hash_length);
     
     Ok(hex_string)
-}
-
-fn format_size(size: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    let mut size = size as f64;
-    let mut unit_index = 0;
-    
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_index += 1;
-    }
-    
-    if unit_index == 0 {
-        format!("{} {}", size as u64, UNITS[unit_index])
-    } else {
-        format!("{:.2} {}", size, UNITS[unit_index])
-    }
 }
 
 // Note: This is a demonstration implementation.

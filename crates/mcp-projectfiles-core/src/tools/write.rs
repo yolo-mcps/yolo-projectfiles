@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_path};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -42,8 +43,8 @@ impl StatefulTool for WriteTool {
         self,
         context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+        let current_dir = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
         let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
@@ -162,22 +163,28 @@ impl StatefulTool for WriteTool {
         read_files_clone.insert(canonical_path.clone());
         context.set_custom_state(read_files_clone).await;
 
-        let action = if self.append { "appended" } else { "wrote" };
-        let backup_msg = if backup_created {
-            " (backup created)"
+        // Calculate content size
+        let content_size = self.content.len() as u64;
+        let size_str = format_size(content_size);
+        
+        // Format the path relative to project root
+        let relative_path = canonical_path.strip_prefix(&current_dir)
+            .unwrap_or(&canonical_path);
+        
+        // Build the message
+        let mut message = if self.append {
+            format!("Appended {} to {}", size_str, format_path(relative_path))
         } else {
-            ""
+            format!("Wrote {} to {}", size_str, format_path(relative_path))
         };
+        
+        if backup_created {
+            message.push_str(" (backup created)");
+        }
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                format!(
-                    "Successfully {} {} bytes to {}{}",
-                    action,
-                    self.content.len(),
-                    self.path,
-                    backup_msg
-                ),
+                message,
                 None,
             ))],
             is_error: Some(false),

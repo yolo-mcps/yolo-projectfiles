@@ -28,6 +28,7 @@ colored = "2.1"
 filetime = "0.2"
 similar = "2.3"
 encoding_rs = "0.8"
+dotenv = "0.15"
 
 [dev-dependencies]
 tokio-test = "0.4"

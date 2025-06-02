@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_path, format_count, format_counts};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use std::time::Instant;
 use glob::{glob_with, MatchOptions};
 
 const TOOL_NAME: &str = "delete";
@@ -48,8 +50,8 @@ impl StatefulTool for DeleteTool {
             )));
         }
         
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+        let current_dir = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
         if self.pattern {
             // Pattern matching mode - treat path as glob pattern
@@ -79,7 +81,9 @@ impl StatefulTool for DeleteTool {
             }
             
             // Delete all matching files/directories
-            let mut _total_deleted = 0;
+            let mut total_size = 0u64;
+            let mut file_count = 0usize;
+            let mut dir_count = 0usize;
             let mut deleted_paths = Vec::new();
             
             for path in paths {
@@ -87,16 +91,19 @@ impl StatefulTool for DeleteTool {
                     .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata for '{}': {}", path.display(), e))))?;
                 
                 if metadata.is_file() {
+                    total_size += metadata.len();
+                    file_count += 1;
                     fs::remove_file(&path).await
                         .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete file '{}': {}", path.display(), e))))?;
                     deleted_paths.push((path.clone(), "file"));
-                    _total_deleted += 1;
                 } else if metadata.is_dir() && self.recursive {
-                    let count = count_entries(&path).await?;
+                    let stats = count_entries_with_size(&path).await?;
+                    total_size += stats.total_size;
+                    file_count += stats.file_count;
+                    dir_count += stats.dir_count;
                     fs::remove_dir_all(&path).await
                         .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete directory '{}': {}", path.display(), e))))?;
                     deleted_paths.push((path.clone(), "directory"));
-                    _total_deleted += count;
                 } else if metadata.is_dir() {
                     return Err(CallToolError::from(tool_errors::invalid_input(
                         TOOL_NAME,
@@ -112,16 +119,36 @@ impl StatefulTool for DeleteTool {
                 context.set_custom_state(read_files_clone).await;
             }
             
-            let summary = format!(
-                "Successfully deleted {} {} matching pattern '{}':\n{}",
-                deleted_paths.len(),
-                if deleted_paths.len() == 1 { "item" } else { "items" },
-                self.path,
-                deleted_paths.iter()
-                    .map(|(p, t)| format!("  - {} ({})", p.strip_prefix(&current_dir).unwrap_or(p).display(), t))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
+            // Format deleted paths with proper quotes
+            let formatted_paths: Vec<String> = deleted_paths.iter()
+                .map(|(p, t)| {
+                    let relative_path = p.strip_prefix(&current_dir).unwrap_or(p);
+                    format!("  - {} ({})", format_path(relative_path), t)
+                })
+                .collect();
+            
+            let counts = format_counts(&[
+                (file_count, "file", "files"),
+                (dir_count, "directory", "directories")
+            ]);
+            
+            let summary = if total_size > 0 {
+                format!(
+                    "Deleted {} matching pattern '{}' ({}, {} freed):\n{}",
+                    format_count(deleted_paths.len(), "item", "items"),
+                    self.path,
+                    counts,
+                    format_size(total_size),
+                    formatted_paths.join("\n")
+                )
+            } else {
+                format!(
+                    "Deleted {} matching pattern '{}':\n{}",
+                    format_count(deleted_paths.len(), "item", "items"),
+                    self.path,
+                    formatted_paths.join("\n")
+                )
+            };
             
             return Ok(CallToolResult {
                 content: vec![CallToolResultContentItem::TextContent(TextContent::new(
@@ -168,19 +195,28 @@ impl StatefulTool for DeleteTool {
             .await
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read metadata: {}", e))))?;
         
-        let deleted_count;
+        // Track operation start time
+        let start_time = Instant::now();
+        let total_size: u64;
+        let file_count: usize;
+        let dir_count: usize;
         let file_type;
         
         if metadata.is_file() {
             file_type = "file";
+            total_size = metadata.len();
+            file_count = 1;
+            dir_count = 0;
             fs::remove_file(&canonical_path)
                 .await
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete file: {}", e))))?;
-            deleted_count = 1;
         } else if metadata.is_dir() {
             file_type = "directory";
             if self.recursive {
-                deleted_count = count_entries(&canonical_path).await?;
+                let stats = count_entries_with_size(&canonical_path).await?;
+                total_size = stats.total_size;
+                file_count = stats.file_count;
+                dir_count = stats.dir_count;
                 fs::remove_dir_all(&canonical_path)
                     .await
                     .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete directory: {}", e))))?;
@@ -200,7 +236,9 @@ impl StatefulTool for DeleteTool {
                 fs::remove_dir(&canonical_path)
                     .await
                     .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to delete empty directory: {}", e))))?;
-                deleted_count = 1;
+                file_count = 0;
+                dir_count = 1;
+                total_size = 0;
             }
         } else {
             return Err(CallToolError::from(tool_errors::invalid_input(
@@ -222,17 +260,32 @@ impl StatefulTool for DeleteTool {
         written_files_clone.remove(&canonical_path);
         context.set_custom_state(written_files_clone).await;
         
-        let message = if self.recursive && deleted_count > 1 {
-            format!(
-                "Successfully deleted {} '{}' ({} items removed)",
-                file_type, self.path, deleted_count
-            )
+        let _duration = start_time.elapsed();
+        
+        // Format the message according to new standards
+        // Format path relative to project root  
+        let relative_path = canonical_path.strip_prefix(&current_dir)
+            .unwrap_or(&canonical_path);
+        
+        // Build metrics string
+        let metrics = if metadata.is_dir() && self.recursive {
+            let counts = format_counts(&[
+                (file_count, "file", "files"),
+                (dir_count, "directory", "directories")
+            ]);
+            format!(" ({}, {} freed)", counts, format_size(total_size))
+        } else if total_size > 0 {
+            format!(" ({} freed)", format_size(total_size))
         } else {
-            format!(
-                "Successfully deleted {} '{}'",
-                file_type, self.path
-            )
+            String::new()
         };
+        
+        let message = format!(
+            "Deleted {} {}{}",
+            file_type,
+            format_path(relative_path),
+            metrics
+        );
 
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
@@ -244,9 +297,18 @@ impl StatefulTool for DeleteTool {
     }
 }
 
-fn count_entries(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, CallToolError>> + Send + '_>> {
+#[derive(Default)]
+struct DeleteStats {
+    total_size: u64,
+    file_count: usize,
+    dir_count: usize,
+}
+
+fn count_entries_with_size(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<DeleteStats, CallToolError>> + Send + '_>> {
     Box::pin(async move {
-    let mut count = 1; // Count the directory itself
+    let mut stats = DeleteStats::default();
+    stats.dir_count = 1; // Count the directory itself
+    
     let mut entries = fs::read_dir(path)
         .await
         .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read directory: {}", e))))?;
@@ -254,13 +316,17 @@ fn count_entries(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Outpu
     loop {
         match entries.next_entry().await {
             Ok(Some(entry)) => {
-                let file_type = entry.file_type().await
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file type: {}", e))))?;
+                let metadata = entry.metadata().await
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata: {}", e))))?;
                 
-                if file_type.is_dir() {
-                    count += Box::pin(count_entries(&entry.path())).await?;
-                } else {
-                    count += 1;
+                if metadata.is_dir() {
+                    let sub_stats = Box::pin(count_entries_with_size(&entry.path())).await?;
+                    stats.total_size += sub_stats.total_size;
+                    stats.file_count += sub_stats.file_count;
+                    stats.dir_count += sub_stats.dir_count;
+                } else if metadata.is_file() {
+                    stats.total_size += metadata.len();
+                    stats.file_count += 1;
                 }
             }
             Ok(None) => break,
@@ -268,7 +334,7 @@ fn count_entries(path: &Path) -> std::pin::Pin<Box<dyn std::future::Future<Outpu
         }
     }
     
-    Ok(count)
+    Ok(stats)
     })
 }
 

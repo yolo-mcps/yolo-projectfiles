@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_path, format_counts};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -8,6 +9,7 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::fs;
+use std::time::Instant;
 
 const TOOL_NAME: &str = "copy";
 
@@ -37,66 +39,74 @@ fn default_preserve_metadata() -> bool {
 impl StatefulTool for CopyTool {
     async fn call_with_context(
         self,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
-        // Process source path
+        // Normalize paths
         let source_path = Path::new(&self.source);
-        let absolute_source = if source_path.is_absolute() {
+        let dest_path = Path::new(&self.destination);
+        
+        // Ensure paths are within project root
+        let canonical_source = if source_path.is_absolute() {
             source_path.to_path_buf()
         } else {
-            current_dir.join(source_path)
+            project_root.join(source_path)
         };
         
-        let canonical_source = absolute_source.canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.source)))?;
+        let canonical_dest = if dest_path.is_absolute() {
+            dest_path.to_path_buf()
+        } else {
+            project_root.join(dest_path)
+        };
         
-        if !canonical_source.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
+        // Validate source exists
+        if !canonical_source.exists() {
+            return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                &self.source,
+                &format!("Source path '{}' does not exist", self.source)
+            )));
+        }
+        
+        // Ensure source is within project root
+        if !canonical_source.starts_with(&project_root) {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
                 "Source path is outside the project directory"
             )));
         }
         
-        if !canonical_source.exists() {
-            return Err(CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.source)));
+        // Ensure destination would be within project root
+        if !canonical_dest.starts_with(&project_root) {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "Destination path is outside the project directory"
+            )));
         }
         
-        // Process destination path
-        let dest_path = Path::new(&self.destination);
-        let absolute_dest = if dest_path.is_absolute() {
-            dest_path.to_path_buf()
-        } else {
-            current_dir.join(dest_path)
-        };
-        
-        // For destination, we can't canonicalize if it doesn't exist yet
-        let canonical_dest = if absolute_dest.exists() {
-            absolute_dest.canonicalize()
-                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination path '{}': {}", self.destination, e))))?
-        } else {
-            // Ensure parent exists and is within project
-            if let Some(parent) = absolute_dest.parent() {
-                let canonical_parent = parent.canonicalize()
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination parent directory: {}", e))))?;
-                if !canonical_parent.starts_with(&current_dir) {
-                    return Err(CallToolError::from(tool_errors::access_denied(
-                        TOOL_NAME,
-                        &self.destination,
-                        "Destination path would be outside the project directory"
-                    )));
-                }
-            }
-            absolute_dest
-        };
-        
-        if !canonical_dest.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
+        // Prevent copying into itself
+        if canonical_source.is_dir() && canonical_dest.starts_with(&canonical_source) {
+            return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                &self.destination,
+                "Cannot copy a directory into itself"
+            )));
+        }
+        
+        // Check if destination is inside an existing directory
+        if let Some(parent) = canonical_dest.parent() {
+            if parent.exists() && parent.is_file() {
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    "Destination parent path exists but is not a directory"
+                )));
+            }
+        }
+        
+        // Additional validation for absolute paths
+        if dest_path.is_absolute() && !canonical_dest.starts_with(&project_root) {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
                 "Destination path is outside the project directory"
             )));
         }
@@ -116,25 +126,38 @@ impl StatefulTool for CopyTool {
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create parent directory: {}", e))))?;
         }
         
+        // Track operation start time
+        let start_time = Instant::now();
+        let total_size: u64;
+        let file_count: usize;
+        let dir_count: usize;
+        
         // Perform the copy
         if canonical_source.is_file() {
             // Copy file
+            let metadata = fs::metadata(&canonical_source)
+                .await
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?;
+            
+            total_size = metadata.len();
+            file_count = 1;
+            dir_count = 0;
+            
             fs::copy(&canonical_source, &canonical_dest)
                 .await
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to copy file: {}", e))))?;
             
             // Preserve metadata if requested
             if self.preserve_metadata {
-                let _metadata = fs::metadata(&canonical_source)
-                    .await
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?;
-                
                 // Metadata preservation is best-effort
                 // Rust's async fs doesn't have direct timestamp setting
             }
         } else if canonical_source.is_dir() {
             // Recursive directory copy
-            copy_dir_recursive(&canonical_source, &canonical_dest, self.overwrite).await?;
+            let stats = copy_dir_recursive(&canonical_source, &canonical_dest, self.overwrite).await?;
+            total_size = stats.total_size;
+            file_count = stats.file_count;
+            dir_count = stats.dir_count;
         } else {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
@@ -142,10 +165,32 @@ impl StatefulTool for CopyTool {
             )));
         }
         
+        let _duration = start_time.elapsed();
         let file_type = if canonical_source.is_dir() { "directory" } else { "file" };
+        
+        // Format paths relative to project root
+        let source_relative = canonical_source.strip_prefix(&project_root)
+            .unwrap_or(&canonical_source);
+        let dest_relative = canonical_dest.strip_prefix(&project_root)
+            .unwrap_or(&canonical_dest);
+        
+        // Build metrics string
+        let metrics = if canonical_source.is_dir() {
+            let counts = format_counts(&[
+                (file_count, "file", "files"),
+                (dir_count, "directory", "directories")
+            ]);
+            format!(" ({}, {})", counts, format_size(total_size))
+        } else {
+            format!(" ({})", format_size(total_size))
+        };
+        
         let message = format!(
-            "Successfully copied {} from '{}' to '{}'",
-            file_type, self.source, self.destination
+            "Copied {} {} to {}{}",
+            file_type,
+            format_path(source_relative),
+            format_path(dest_relative),
+            metrics
         );
 
         Ok(CallToolResult {
@@ -158,16 +203,27 @@ impl StatefulTool for CopyTool {
     }
 }
 
+#[derive(Default)]
+struct CopyStats {
+    total_size: u64,
+    file_count: usize,
+    dir_count: usize,
+}
+
 fn copy_dir_recursive<'a>(
     src: &'a Path, 
     dst: &'a Path, 
     overwrite: bool
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CallToolError>> + Send + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CopyStats, CallToolError>> + Send + 'a>> {
     Box::pin(async move {
+    let mut stats = CopyStats::default();
+    
     // Create destination directory
     fs::create_dir_all(dst)
         .await
         .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create directory: {}", e))))?;
+    
+    stats.dir_count += 1;
     
     // Read directory entries
     let mut entries = fs::read_dir(src)
@@ -184,7 +240,10 @@ fn copy_dir_recursive<'a>(
                 let dst_path = dst.join(entry.file_name());
                 
                 if file_type.is_dir() {
-                    Box::pin(copy_dir_recursive(&src_path, &dst_path, overwrite)).await?;
+                    let sub_stats = Box::pin(copy_dir_recursive(&src_path, &dst_path, overwrite)).await?;
+                    stats.total_size += sub_stats.total_size;
+                    stats.file_count += sub_stats.file_count;
+                    stats.dir_count += sub_stats.dir_count;
                 } else if file_type.is_file() {
                     if dst_path.exists() && !overwrite {
                         return Err(CallToolError::from(tool_errors::invalid_input(
@@ -192,6 +251,14 @@ fn copy_dir_recursive<'a>(
                             &format!("Destination file '{}' already exists", dst_path.display())
                         )));
                     }
+                    
+                    let metadata = fs::metadata(&src_path)
+                        .await
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get file metadata: {}", e))))?;
+                    
+                    stats.total_size += metadata.len();
+                    stats.file_count += 1;
+                    
                     fs::copy(&src_path, &dst_path)
                         .await
                         .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to copy file: {}", e))))?;
@@ -202,7 +269,7 @@ fn copy_dir_recursive<'a>(
         }
     }
     
-    Ok(())
+    Ok(stats)
     })
 }
 

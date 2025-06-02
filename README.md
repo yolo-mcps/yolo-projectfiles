@@ -37,8 +37,19 @@ projectfiles sse --port 3000
 
 ### Environment Variables
 
+The server supports loading environment variables from a `.env` file in the project root. See `.env.example` for a template.
+
 - `RUST_LOG`: Set logging level (e.g., `RUST_LOG=debug`)
-- `NO_COLOR`: Disable colors in terminal output (e.g., `NO_COLOR=1`)
+- `NO_COLOR`: Disable all colored output (e.g., `NO_COLOR=1`)
+- `YOLO_PROJECTFILES_THEME`: Select diff color theme (default: `github`)
+  - `github`: GitHub-style diff colors with light backgrounds
+  - `gitlab`: GitLab-style diff colors
+  - `monokai`: Monokai theme colors (no backgrounds)
+  - `solarized`: Solarized theme colors
+  - `dracula`: Dracula theme colors
+  - `classic`: Classic red/green/cyan colors
+  - `none`: No colors (same as setting `NO_COLOR=1`)
+- `MCP_PROJECT_ROOT`: Override the project root directory
 
 ### Logging
 

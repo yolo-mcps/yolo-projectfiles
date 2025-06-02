@@ -1,1 +1,1 @@
-Single line without newline
+This is a test of the colored diff feature

@@ -30,6 +30,8 @@ might have access to files outside the current project directory.
 
 - `RUST_LOG=debug` - Enable debug logging
 - `NO_COLOR=1` - Disable colored terminal output
+- `YOLO_PROJECTFILES_THEME=github` - Set diff color theme (github, gitlab, monokai, solarized, dracula, classic, none)
+- Supports `.env` file for local configuration
 
 ## Architecture Overview
 

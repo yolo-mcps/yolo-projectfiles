@@ -1,4 +1,5 @@
 use crate::config::tool_errors;
+use crate::tools::utils::{format_count, format_path};
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -88,57 +89,51 @@ impl WcTool {
         };
         
         // Perform counts
-        let mut result = serde_json::Map::new();
-        result.insert("path".to_string(), serde_json::Value::String(self.path.clone()));
+        let line_count = if self.count_lines {
+            contents.lines().count()
+        } else {
+            0
+        };
+        
+        let word_count = if self.count_words {
+            count_words(&contents)
+        } else {
+            0
+        };
+        
+        let char_count = if self.count_chars {
+            contents.chars().count()
+        } else {
+            0
+        };
+        
+
+        
+        // Format path relative to project root
+        let relative_path = normalized_path.strip_prefix(&current_dir)
+            .unwrap_or(&normalized_path);
+        
+        // Create human-readable output
+        let mut output_lines = Vec::new();
+        output_lines.push(format!("Word count for {}", format_path(relative_path)));
+        output_lines.push("".to_string());
         
         if self.count_lines {
-            let line_count = contents.lines().count();
-            result.insert("lines".to_string(), serde_json::Value::Number(line_count.into()));
-        }
-        
-        if self.count_words {
-            let word_count = count_words(&contents);
-            result.insert("words".to_string(), serde_json::Value::Number(word_count.into()));
-        }
-        
-        if self.count_chars {
-            let char_count = contents.chars().count();
-            result.insert("characters".to_string(), serde_json::Value::Number(char_count.into()));
-        }
-        
-        if self.count_bytes {
-            result.insert("bytes".to_string(), serde_json::Value::Number(byte_count.into()));
-        }
-        
-        // Format output similar to wc command
-        let mut summary_parts = Vec::new();
-        if self.count_lines {
-            if let Some(lines) = result.get("lines") {
-                summary_parts.push(format!("{} lines", lines));
-            }
+            output_lines.push(format!("Lines:      {}", format_count(line_count, "line", "lines")));
         }
         if self.count_words {
-            if let Some(words) = result.get("words") {
-                summary_parts.push(format!("{} words", words));
-            }
+            output_lines.push(format!("Words:      {}", format_count(word_count, "word", "words")));
         }
         if self.count_chars {
-            if let Some(chars) = result.get("characters") {
-                summary_parts.push(format!("{} characters", chars));
-            }
+            output_lines.push(format!("Characters: {}", format_count(char_count, "character", "characters")));
         }
         if self.count_bytes {
-            if let Some(bytes) = result.get("bytes") {
-                summary_parts.push(format!("{} bytes", bytes));
-            }
+            output_lines.push(format!("Bytes:      {}", format_count(byte_count as usize, "byte", "bytes")));
         }
-        
-        result.insert("summary".to_string(), serde_json::Value::String(summary_parts.join(", ")));
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                serde_json::to_string_pretty(&result)
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to serialize result: {}", e))))?,
+                output_lines.join("\n"),
                 None,
             ))],
             is_error: Some(false),

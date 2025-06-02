@@ -9,6 +9,7 @@ use glob::Pattern;
 use chrono::{Local, Duration};
 use std::time::SystemTime;
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_count};
 
 const TOOL_NAME: &str = "find";
 
@@ -149,11 +150,14 @@ impl FindTool {
         }
         
         // Add summary
-        output.push_str(&format!("\n--- Found {} items", results.len()));
+        let found_msg = format_count(results.len(), "item", "items");
+        let searched_msg = format_count(search_count, "item", "items");
+        
+        output.push_str(&format!("\nFound {}", found_msg));
         if truncated {
             output.push_str(&format!(" (showing first {})", self.max_results));
         }
-        output.push_str(&format!(", searched {} items total ---\n", search_count));
+        output.push_str(&format!(", searched {} total", searched_msg));
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
@@ -430,24 +434,3 @@ fn parse_date_filter(s: &str) -> Result<DateFilter, String> {
     })
 }
 
-fn format_size(size: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    
-    if size == 0 {
-        return "0 B".to_string();
-    }
-    
-    let mut size = size as f64;
-    let mut unit_index = 0;
-    
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_index += 1;
-    }
-    
-    if unit_index == 0 {
-        format!("{} {}", size as u64, UNITS[unit_index])
-    } else {
-        format!("{:.2} {}", size, UNITS[unit_index])
-    }
-}

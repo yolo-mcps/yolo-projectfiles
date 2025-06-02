@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::{tool_errors, format_tool_error};
+use crate::tools::utils::format_count;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -147,9 +148,16 @@ impl StatefulTool for GrepTool {
         // Format output
         let mut output = String::new();
         if all_matches.is_empty() {
-            output.push_str(&format!("No matches found for pattern '{}' in {} files searched.", self.pattern, files_searched));
+            output.push_str(&format!("No matches found for pattern '{}' in {} searched.", 
+                self.pattern, 
+                format_count(files_searched, "file", "files")
+            ));
         } else {
-            output.push_str(&format!("Found {} matches for pattern '{}' in {} files:\n\n", all_matches.len(), self.pattern, files_searched));
+            output.push_str(&format!("Found {} for pattern '{}' in {}:\n\n", 
+                format_count(all_matches.len(), "match", "matches"),
+                self.pattern,
+                format_count(files_searched, "file", "files")
+            ));
             
             for (i, m) in all_matches.iter().enumerate() {
                 if i > 0 {

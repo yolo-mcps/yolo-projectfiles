@@ -57,6 +57,13 @@ impl Default for StdioHandler {
 /// Run the MCP server with stdio transport
 #[instrument(level = "info")]
 pub async fn run_stdio_server() -> anyhow::Result<()> {
+    // Load .env file if it exists (ignore errors if not found)
+    if let Err(e) = dotenv::dotenv() {
+        debug!("No .env file loaded: {}", e);
+    } else {
+        info!("Loaded environment variables from .env file");
+    }
+    
     info!("Initializing stdio transport handler");
     let handler = StdioHandler::new();
     let server_details = create_server_details();

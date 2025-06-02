@@ -11,6 +11,7 @@ use chrono::{DateTime, Local};
 use async_trait::async_trait;
 use crate::config::tool_errors;
 use crate::context::{StatefulTool, ToolContext};
+use crate::tools::utils::{format_count, format_path};
 
 const TOOL_NAME: &str = "list";
 
@@ -127,20 +128,38 @@ impl StatefulTool for ListTool {
 
         // Format output
         let mut output_lines = Vec::new();
-        for entry in entries {
+        for entry in &entries {
             let line = if self.show_metadata {
-                self.format_with_metadata(&entry)?
+                self.format_with_metadata(entry)?
             } else {
-                self.format_simple(&entry)
+                self.format_simple(entry)
             };
             output_lines.push(line);
         }
 
         let listing = output_lines.join("\n");
+        
+        // Add summary
+        let _file_count = entries.iter().filter(|e| !e.is_dir).count();
+        let _dir_count = entries.iter().filter(|e| e.is_dir).count();
+        
+        let relative_path = canonical_path.strip_prefix(&project_root)
+            .unwrap_or(&canonical_path);
+        
+        let summary = format!("\nListed {} in {}", 
+            format_count(entries.len(), "item", "items"),
+            format_path(relative_path)
+        );
+        
+        let final_output = if !listing.is_empty() {
+            format!("{}{}", listing, summary)
+        } else {
+            summary.trim_start().to_string()
+        };
 
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                listing, None,
+                final_output, None,
             ))],
             is_error: Some(false),
             meta: None,

@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::{format_size, format_path};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use std::time::Instant;
 
 const TOOL_NAME: &str = "move";
 
@@ -40,8 +42,8 @@ impl StatefulTool for MoveTool {
         self,
         context: &ToolContext,
     ) -> Result<CallToolResult, CallToolError> {
-        let current_dir = std::env::current_dir()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get current directory: {}", e))))?;
+        let current_dir = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
         // Process source path
         let source_path = Path::new(&self.source);
@@ -113,12 +115,19 @@ impl StatefulTool for MoveTool {
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create parent directory: {}", e))))?;
         }
         
-        // Get metadata before move if preservation is requested
-        let metadata = if self.preserve_metadata {
-            Some(fs::metadata(&canonical_source).await
-                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?)
+        // Track operation start time
+        let start_time = Instant::now();
+        
+        // Get metadata before move
+        let metadata = fs::metadata(&canonical_source).await
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?;
+        
+        let is_dir = metadata.is_dir();
+        let total_size = if is_dir {
+            // For directories, we'll just indicate it's a directory
+            0u64
         } else {
-            None
+            metadata.len()
         };
         
         // Perform the move
@@ -126,14 +135,14 @@ impl StatefulTool for MoveTool {
             .await
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to move file: {}", e))))?;
         
-        // Restore metadata if requested and available
-        if let Some(meta) = metadata {
+        // Restore metadata if requested
+        if self.preserve_metadata {
             // Set file times (modified and accessed)
-            if let Ok(modified) = meta.modified() {
+            if let Ok(modified) = metadata.modified() {
                 let _ = filetime::set_file_mtime(&canonical_dest, 
                     filetime::FileTime::from_system_time(modified));
             }
-            if let Ok(accessed) = meta.accessed() {
+            if let Ok(accessed) = metadata.accessed() {
                 let _ = filetime::set_file_atime(&canonical_dest, 
                     filetime::FileTime::from_system_time(accessed));
             }
@@ -143,7 +152,7 @@ impl StatefulTool for MoveTool {
             {
                 use std::os::unix::fs::PermissionsExt;
                 let _ = fs::set_permissions(&canonical_dest, 
-                    std::fs::Permissions::from_mode(meta.permissions().mode())).await;
+                    std::fs::Permissions::from_mode(metadata.permissions().mode())).await;
             }
         }
         
@@ -168,10 +177,36 @@ impl StatefulTool for MoveTool {
             context.set_custom_state(written_files_clone).await;
         }
         
-        let file_type = if canonical_source.is_dir() { "directory" } else { "file" };
+        let _duration = start_time.elapsed();
+        let file_type = if is_dir { "directory" } else { "file" };
+        
+        // Format paths relative to project root
+        let source_relative = canonical_source.strip_prefix(&current_dir)
+            .unwrap_or(&canonical_source);
+        let dest_relative = canonical_dest.strip_prefix(&current_dir)
+            .unwrap_or(&canonical_dest);
+        
+        // Build metrics string
+        let mut metrics_parts = Vec::new();
+        if !is_dir && total_size > 0 {
+            metrics_parts.push(format_size(total_size));
+        }
+        if self.preserve_metadata {
+            metrics_parts.push("metadata preserved".to_string());
+        }
+        
+        let metrics = if !metrics_parts.is_empty() {
+            format!(" ({})", metrics_parts.join(", "))
+        } else {
+            String::new()
+        };
+        
         let message = format!(
-            "Successfully moved {} from '{}' to '{}'",
-            file_type, self.source, self.destination
+            "Moved {} {} to {}{}",
+            file_type,
+            format_path(source_relative),
+            format_path(dest_relative),
+            metrics
         );
 
         Ok(CallToolResult {

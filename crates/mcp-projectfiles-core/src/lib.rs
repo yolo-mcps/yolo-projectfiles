@@ -4,6 +4,7 @@ pub mod error;
 pub mod handler;
 pub mod protocol;
 pub mod server;
+pub mod theme;
 pub mod tools;
 pub mod transports;
 

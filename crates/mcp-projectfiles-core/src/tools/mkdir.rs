@@ -1,4 +1,5 @@
 use crate::config::tool_errors;
+use crate::tools::utils::format_path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -152,10 +153,14 @@ impl MkdirTool {
             }
         }
         
+        // Format path relative to project root
+        let relative_path = absolute_path.strip_prefix(&current_dir)
+            .unwrap_or(&absolute_path);
+        
         let message = if self.parents {
-            format!("Successfully created directory '{}' (with parents)", self.path)
+            format!("Created directory {} (with parents)", format_path(relative_path))
         } else {
-            format!("Successfully created directory '{}'", self.path)
+            format!("Created directory {}", format_path(relative_path))
         };
 
         Ok(CallToolResult {

@@ -1,4 +1,5 @@
 use crate::config::tool_errors;
+use crate::tools::utils::format_path;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -237,9 +238,20 @@ impl TouchTool {
             }
         }
         
+        // Format path relative to project root
+        let relative_path = absolute_path.strip_prefix(&current_dir)
+            .unwrap_or(&absolute_path);
+        
+        let action_str = match action {
+            "created" => "Created",
+            "updated" => "Updated timestamps for",
+            "touched" => "Touched",
+            _ => action
+        };
+        
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                format!("Successfully {} file '{}'", action, self.path), None,
+                format!("{} file {}", action_str, format_path(relative_path)), None,
             ))],
             is_error: Some(false),
             meta: None,
