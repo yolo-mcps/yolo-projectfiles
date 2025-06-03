@@ -1,6 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::{tool_errors, format_tool_error};
-use crate::tools::utils::format_count;
+use crate::tools::utils::{format_count, resolve_path_for_read};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -15,7 +15,7 @@ use tokio::io::AsyncReadExt;
 
 const TOOL_NAME: &str = "grep";
 
-#[mcp_tool(name = "grep", description = "Searches for patterns in text files within the project directory. Returns matching lines with context and file information. Supports regex patterns, file filtering, and customizable output. Prefer this over system 'grep' or 'rg' when searching project files.")]
+#[mcp_tool(name = "grep", description = "Searches for patterns in text files within the project directory. Returns matching lines with context and file information. Can follow symlinks to search in directories outside the project directory. Supports regex patterns, file filtering, and customizable output. Prefer this over system 'grep' or 'rg' when searching project files.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct GrepTool {
     /// Regular expression pattern to search for
@@ -44,6 +44,9 @@ pub struct GrepTool {
     /// Maximum number of results to return
     #[serde(default = "default_max_results")]
     pub max_results: u32,
+    /// Follow symlinks for the search directory (default: true)
+    #[serde(default = "default_follow_search_path")]
+    pub follow_search_path: bool,
 }
 
 fn default_path() -> String {
@@ -60,6 +63,10 @@ fn default_linenumbers() -> bool {
 
 fn default_max_results() -> u32 {
     100
+}
+
+fn default_follow_search_path() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -80,30 +87,13 @@ impl StatefulTool for GrepTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::new(std::io::Error::new(std::io::ErrorKind::Other, format_tool_error(TOOL_NAME, &format!("Failed to get project root: {}", e)))))?;
         
-        let canonical_project_root = project_root.canonicalize()
-            .map_err(|e| CallToolError::new(std::io::Error::new(std::io::ErrorKind::Other, format_tool_error(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e)))))?;
+        // Use the utility function to resolve search path with symlink support
+        let canonical_search_path = resolve_path_for_read(&self.path, &project_root, self.follow_search_path, TOOL_NAME)?;
         
-        // Resolve search path
-        let search_path = Path::new(&self.path);
-        let absolute_search_path = if search_path.is_absolute() {
-            search_path.to_path_buf()
-        } else {
-            project_root.join(search_path)
-        };
-        
-        // Ensure search path exists and is within project directory
-        if !absolute_search_path.exists() {
-            return Err(CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)));
-        }
-        
-        let canonical_search_path = absolute_search_path.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path '{}': {}", self.path, e))))?;
-        
-        if !canonical_search_path.starts_with(&canonical_project_root) {
-            return Err(CallToolError::from(tool_errors::access_denied(
+        if !canonical_search_path.is_dir() {
+            return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME, 
-                &self.path, 
-                "Path is outside the project directory"
+                &format!("Path is not a directory: {}", self.path)
             )));
         }
         
@@ -164,7 +154,7 @@ impl StatefulTool for GrepTool {
                     output.push_str("\n");
                 }
                 
-                let relative_path = m.file_path.strip_prefix(&canonical_project_root)
+                let relative_path = m.file_path.strip_prefix(&project_root)
                     .unwrap_or(&m.file_path);
                 
                 // Output context before

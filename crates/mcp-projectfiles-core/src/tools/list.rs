@@ -11,13 +11,13 @@ use chrono::{DateTime, Local};
 use async_trait::async_trait;
 use crate::config::tool_errors;
 use crate::context::{StatefulTool, ToolContext};
-use crate::tools::utils::{format_count, format_path};
+use crate::tools::utils::{format_count, format_path, resolve_path_for_read};
 
 const TOOL_NAME: &str = "list";
 
 #[mcp_tool(
     name = "list",
-    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Provides a clean, structured view of the directory. Prefer this over system 'ls' command when listing project files."
+    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Can follow symlinks to list directories outside the project directory. Provides a clean, structured view of the directory. Prefer this over system 'ls' command when listing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ListTool {
@@ -43,10 +43,18 @@ pub struct ListTool {
     /// Whether to include file metadata (size, permissions, modified time) (default: false)
     #[serde(default)]
     pub show_metadata: bool,
+    
+    /// Follow symlinks to list directories outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_sort_by() -> String {
     "name".to_string()
+}
+
+fn default_follow_symlinks() -> bool {
+    true
 }
 
 #[derive(Debug)]
@@ -66,26 +74,8 @@ impl StatefulTool for ListTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
-        let canonical_project_root = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
-        
-        let requested_path = Path::new(&self.path);
-        let absolute_path = if requested_path.is_absolute() {
-            requested_path.to_path_buf()
-        } else {
-            project_root.join(requested_path)
-        };
-        
-        let canonical_path = absolute_path.canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
-        
-        if !canonical_path.starts_with(&canonical_project_root) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let canonical_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         let path = &canonical_path;
 

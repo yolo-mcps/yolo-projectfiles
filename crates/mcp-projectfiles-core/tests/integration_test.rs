@@ -1,4 +1,4 @@
-use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool};
+use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool, FindTool, TreeTool};
 use mcp_projectfiles_core::context::ToolContext;
 use mcp_projectfiles_core::StatefulTool;
 use mcp_projectfiles_core::protocol::CallToolResultContentItem;
@@ -6,6 +6,11 @@ use mcp_projectfiles_core::protocol::CallToolResultContentItem;
 use tempfile::TempDir;
 use std::fs;
 use serial_test::serial;
+
+#[cfg(unix)]
+use std::os::unix::fs as unix_fs;
+#[cfg(windows)]
+use std::os::windows::fs as windows_fs;
 
 fn extract_text_content(result: &mcp_projectfiles_core::CallToolResult) -> String {
     match &result.content[0] {
@@ -46,6 +51,7 @@ async fn test_list_tool_basic() {
         sort_by: "name".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -76,6 +82,7 @@ async fn test_list_tool_recursive() {
         sort_by: "name".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -104,6 +111,7 @@ async fn test_list_tool_filter() {
         sort_by: "name".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -132,6 +140,7 @@ async fn test_list_tool_sort_by_size() {
         sort_by: "size".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -160,6 +169,7 @@ async fn test_list_invalid_sort() {
         sort_by: "invalid".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call().await;
@@ -189,6 +199,7 @@ async fn test_grep_tool_basic() {
         context_before: Some(0),
         context_after: Some(0),
         max_results: 0, // 0 means no limit
+        follow_search_path: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -218,6 +229,7 @@ async fn test_grep_tool_case_insensitive() {
         context_before: Some(0),
         context_after: Some(0),
         max_results: 0,
+        follow_search_path: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -246,6 +258,7 @@ async fn test_grep_tool_context() {
         context_before: Some(1),
         context_after: Some(1),
         max_results: 0,
+        follow_search_path: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -276,6 +289,7 @@ async fn test_grep_tool_file_filter() {
         context_before: Some(0),
         context_after: Some(0),
         max_results: 0,
+        follow_search_path: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -305,6 +319,7 @@ async fn test_grep_tool_max_results() {
         context_before: Some(0),
         context_after: Some(0),
         max_results: 3,
+        follow_search_path: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -603,4 +618,572 @@ async fn test_kill_tool_integration_with_real_process() {
             panic!("Error checking process status: {}", e);
         }
     }
+}
+
+// Helper function to create symlinks across platforms
+fn create_symlink(original: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return unix_fs::symlink(original, link);
+    
+    #[cfg(windows)]
+    {
+        if original.is_dir() {
+            return windows_fs::symlink_dir(original, link);
+        } else {
+            return windows_fs::symlink_file(original, link);
+        }
+    }
+}
+
+/// Set up test environment with symlinks
+fn setup_symlink_test_env() -> (TempDir, TempDir, ToolContext) {
+    let temp_dir = TempDir::new().unwrap();
+    let external_dir = TempDir::new().unwrap();
+    let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
+    (temp_dir, external_dir, context)
+}
+
+// Find Tool Symlink Tests
+#[tokio::test]
+#[serial]
+async fn test_find_tool_symlink_within_project() {
+    let (temp_dir, _external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create directory structure
+    fs::create_dir(temp_path.join("real_dir")).unwrap();
+    fs::write(temp_path.join("real_dir/test.txt"), "content").unwrap();
+    
+    // Create symlink within project
+    if create_symlink(&temp_path.join("real_dir"), &temp_path.join("symlink_dir")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = FindTool {
+        path: "symlink_dir".to_string(),
+        name_pattern: Some("*.txt".to_string()),
+        type_filter: "file".to_string(),
+        size_filter: None,
+        date_filter: None,
+        max_depth: None,
+        follow_symlinks: true,
+        follow_search_path: true,
+        max_results: 100,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("test.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_find_tool_symlink_outside_project_with_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = FindTool {
+        path: "external_link".to_string(),
+        name_pattern: Some("*.txt".to_string()),
+        type_filter: "file".to_string(),
+        size_filter: None,
+        date_filter: None,
+        max_depth: None,
+        follow_symlinks: true,
+        follow_search_path: true,
+        max_results: 100,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("external.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_find_tool_symlink_outside_project_no_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = FindTool {
+        path: "external_link".to_string(),
+        name_pattern: Some("*.txt".to_string()),
+        type_filter: "file".to_string(),
+        size_filter: None,
+        date_filter: None,
+        max_depth: None,
+        follow_symlinks: false,
+        follow_search_path: false,
+        max_results: 100,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("outside the project directory") || error_msg.contains("Failed to resolve path"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_find_tool_broken_symlink() {
+    let (temp_dir, _external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create symlink to non-existent target
+    if create_symlink(&temp_path.join("nonexistent"), &temp_path.join("broken_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = FindTool {
+        path: ".".to_string(),
+        name_pattern: Some("broken_link".to_string()),
+        type_filter: "any".to_string(),
+        size_filter: None,
+        date_filter: None,
+        max_depth: None,
+        follow_symlinks: false,
+        follow_search_path: true,
+        max_results: 100,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("broken_link"));
+}
+
+// List Tool Symlink Tests
+#[tokio::test]
+#[serial]
+async fn test_list_tool_symlink_within_project() {
+    let (temp_dir, _external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create directory with content
+    fs::create_dir(temp_path.join("real_dir")).unwrap();
+    fs::write(temp_path.join("real_dir/file1.txt"), "content1").unwrap();
+    fs::write(temp_path.join("real_dir/file2.txt"), "content2").unwrap();
+    
+    // Create symlink within project
+    if create_symlink(&temp_path.join("real_dir"), &temp_path.join("symlink_dir")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = ListTool {
+        path: "symlink_dir".to_string(),
+        recursive: false,
+        filter: None,
+        sort_by: "name".to_string(),
+        show_hidden: false,
+        show_metadata: false,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("file1.txt"));
+    assert!(output.contains("file2.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_tool_symlink_outside_project_with_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external1.txt"), "external content 1").unwrap();
+    fs::write(external_path.join("external2.txt"), "external content 2").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = ListTool {
+        path: "external_link".to_string(),
+        recursive: false,
+        filter: None,
+        sort_by: "name".to_string(),
+        show_hidden: false,
+        show_metadata: false,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("external1.txt"));
+    assert!(output.contains("external2.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_tool_symlink_outside_project_no_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = ListTool {
+        path: "external_link".to_string(),
+        recursive: false,
+        filter: None,
+        sort_by: "name".to_string(),
+        show_hidden: false,
+        show_metadata: false,
+        follow_symlinks: false,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("outside the project directory") || error_msg.contains("Failed to resolve path"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_list_tool_directory_containing_symlinks() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create files in project
+    fs::write(temp_path.join("local.txt"), "local content").unwrap();
+    
+    // Create external file and symlink to it
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    if create_symlink(&external_path.join("external.txt"), &temp_path.join("external_link.txt")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = ListTool {
+        path: ".".to_string(),
+        recursive: false,
+        filter: None,
+        sort_by: "name".to_string(),
+        show_hidden: false,
+        show_metadata: false,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("local.txt"));
+    assert!(output.contains("external_link.txt"));
+}
+
+// Tree Tool Symlink Tests
+#[tokio::test]
+#[serial]
+async fn test_tree_tool_symlink_within_project() {
+    let (temp_dir, _external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create directory structure
+    fs::create_dir_all(temp_path.join("real_dir/subdir")).unwrap();
+    fs::write(temp_path.join("real_dir/file.txt"), "content").unwrap();
+    fs::write(temp_path.join("real_dir/subdir/nested.txt"), "nested content").unwrap();
+    
+    // Create symlink within project
+    if create_symlink(&temp_path.join("real_dir"), &temp_path.join("symlink_dir")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = TreeTool {
+        path: "symlink_dir".to_string(),
+        show_hidden: false,
+        dirs_only: false,
+        max_depth: None,
+        pattern_filter: None,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("file.txt"));
+    assert!(output.contains("subdir"));
+    assert!(output.contains("nested.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tree_tool_symlink_outside_project_with_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory structure
+    fs::create_dir(external_path.join("subdir")).unwrap();
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    fs::write(external_path.join("subdir/nested.txt"), "nested external").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = TreeTool {
+        path: "external_link".to_string(),
+        show_hidden: false,
+        dirs_only: false,
+        max_depth: None,
+        pattern_filter: None,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("external.txt"));
+    assert!(output.contains("nested.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tree_tool_symlink_outside_project_no_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = TreeTool {
+        path: "external_link".to_string(),
+        show_hidden: false,
+        dirs_only: false,
+        max_depth: None,
+        pattern_filter: None,
+        follow_symlinks: false,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("outside the project directory") || error_msg.contains("Failed to resolve path"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tree_tool_showing_symlinks_in_structure() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create files in project
+    fs::write(temp_path.join("local.txt"), "local content").unwrap();
+    
+    // Create external file and symlink to it
+    fs::write(external_path.join("external.txt"), "external content").unwrap();
+    if create_symlink(&external_path.join("external.txt"), &temp_path.join("external_link.txt")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = TreeTool {
+        path: ".".to_string(),
+        show_hidden: false,
+        dirs_only: false,
+        max_depth: Some(2),
+        pattern_filter: None,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("local.txt"));
+    assert!(output.contains("external_link.txt"));
+}
+
+// Grep Tool Symlink Tests
+#[tokio::test]
+#[serial]
+async fn test_grep_tool_symlink_within_project() {
+    let (temp_dir, _external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create directory with content
+    fs::create_dir(temp_path.join("real_dir")).unwrap();
+    fs::write(temp_path.join("real_dir/test.txt"), "hello world").unwrap();
+    fs::write(temp_path.join("real_dir/other.txt"), "goodbye world").unwrap();
+    
+    // Create symlink within project
+    if create_symlink(&temp_path.join("real_dir"), &temp_path.join("symlink_dir")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = GrepTool {
+        pattern: "hello".to_string(),
+        path: "symlink_dir".to_string(),
+        case_insensitive: false,
+        linenumbers: true,
+        max_results: 100,
+        include: None,
+        exclude: None,
+        context_before: None,
+        context_after: None,
+        follow_search_path: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("hello world"));
+    assert!(output.contains("test.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_grep_tool_symlink_outside_project_with_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external.txt"), "external hello world").unwrap();
+    fs::write(external_path.join("other.txt"), "external goodbye").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = GrepTool {
+        pattern: "hello".to_string(),
+        path: "external_link".to_string(),
+        case_insensitive: false,
+        linenumbers: true,
+        max_results: 100,
+        include: None,
+        exclude: None,
+        context_before: None,
+        context_after: None,
+        follow_search_path: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("external hello world"));
+    assert!(output.contains("external.txt"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_grep_tool_symlink_outside_project_no_follow() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with content
+    fs::write(external_path.join("external.txt"), "external hello world").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = GrepTool {
+        pattern: "hello".to_string(),
+        path: "external_link".to_string(),
+        case_insensitive: false,
+        linenumbers: true,
+        max_results: 100,
+        include: None,
+        exclude: None,
+        context_before: None,
+        context_after: None,
+        follow_search_path: false,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("outside the project directory") || error_msg.contains("Failed to resolve path"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_grep_tool_files_within_symlinked_directory() {
+    let (temp_dir, external_dir, context) = setup_symlink_test_env();
+    let temp_path = temp_dir.path();
+    let external_path = external_dir.path();
+    
+    // Create external directory with multiple files
+    fs::create_dir(external_path.join("subdir")).unwrap();
+    fs::write(external_path.join("file1.txt"), "target pattern in file1").unwrap();
+    fs::write(external_path.join("file2.txt"), "no match here").unwrap();
+    fs::write(external_path.join("subdir/file3.txt"), "target pattern in nested file").unwrap();
+    
+    // Create symlink to external directory
+    if create_symlink(external_path, &temp_path.join("external_link")).is_err() {
+        eprintln!("Skipping symlink test - platform doesn't support symlinks");
+        return;
+    }
+    
+    let tool = GrepTool {
+        pattern: "target pattern".to_string(),
+        path: "external_link".to_string(),
+        case_insensitive: false,
+        linenumbers: true,
+        max_results: 100,
+        include: None,
+        exclude: None,
+        context_before: None,
+        context_after: None,
+        follow_search_path: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    assert!(output.contains("file1.txt"));
+    assert!(output.contains("file3.txt"));
+    assert!(output.contains("target pattern in file1"));
+    assert!(output.contains("target pattern in nested file"));
+    assert!(!output.contains("no match here"));
 }

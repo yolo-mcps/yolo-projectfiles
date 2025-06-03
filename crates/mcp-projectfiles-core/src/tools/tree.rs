@@ -1,6 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
-use crate::tools::utils::{format_size, format_count, format_path};
+use crate::tools::utils::{format_size, format_count, format_path, resolve_path_for_read};
 use async_trait::async_trait;
 use std::path::Path;
 use rust_mcp_schema::{
@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "tree";
 
 #[mcp_tool(
     name = "tree",
-    description = "Displays directory structure as a tree visualization within the project directory. Shows files and directories in a hierarchical format. Prefer this over the system 'tree' command when exploring project structure."
+    description = "Displays directory structure as a tree visualization within the project directory. Shows files and directories in a hierarchical format. Can follow symlinks to display directories outside the project directory. Prefer this over the system 'tree' command when exploring project structure."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TreeTool {
@@ -38,10 +38,18 @@ pub struct TreeTool {
     /// File pattern filter (e.g., "*.rs", "*.{js,ts}")
     #[serde(default)]
     pub pattern_filter: Option<String>,
+    
+    /// Follow symlinks for the tree root directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_path() -> String {
     ".".to_string()
+}
+
+fn default_follow_symlinks() -> bool {
+    true
 }
 
 #[async_trait]
@@ -53,25 +61,9 @@ impl StatefulTool for TreeTool {
         // Get project root and resolve path
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let target_path = current_dir.join(&self.path);
-        
-        // Security check - ensure path is within project directory
-        let normalized_path = target_path
-            .canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
-            
-        if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let normalized_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Check if path exists and is a directory
         if !normalized_path.exists() {
@@ -111,7 +103,7 @@ impl StatefulTool for TreeTool {
         ).await?;
         
         // Add summary with path
-        let relative_path = normalized_path.strip_prefix(&current_dir)
+        let relative_path = normalized_path.strip_prefix(&project_root)
             .unwrap_or(&normalized_path);
         
         tree_output.push_str(&format!(
@@ -305,6 +297,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -340,6 +333,7 @@ mod tests {
             show_hidden: false,
             dirs_only: true,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -372,6 +366,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -402,6 +397,7 @@ mod tests {
             show_hidden: true,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -428,6 +424,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: Some("*.rs".to_string()),
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -458,6 +455,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -490,6 +488,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -515,6 +514,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -523,7 +523,7 @@ mod tests {
         let error = result.unwrap_err();
         let error_str = error.to_string();
         assert!(error_str.contains("projectfiles:tree"));
-        assert!(error_str.contains("Failed to resolve path"));
+        assert!(error_str.contains("not found"));
     }
 
     #[tokio::test]
@@ -536,6 +536,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: false, // Disable symlink following to test security
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -544,7 +545,7 @@ mod tests {
         let error = result.unwrap_err();
         let error_str = error.to_string();
         assert!(error_str.contains("projectfiles:tree"));
-        assert!(error_str.contains("Failed to resolve path"));
+        assert!(error_str.contains("not found") || error_str.contains("outside the project directory"));
     }
 
     #[tokio::test]
@@ -558,6 +559,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: Some("[invalid".to_string()), // Invalid glob pattern
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;
@@ -583,6 +585,7 @@ mod tests {
             show_hidden: false,
             dirs_only: false,
             pattern_filter: None,
+            follow_symlinks: true,
         };
         
         let result = tree_tool.call_with_context(&context).await;

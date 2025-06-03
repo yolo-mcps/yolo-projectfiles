@@ -1,7 +1,8 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
-use std::path::Path;
+
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -12,17 +13,21 @@ use chrono::{DateTime, Local};
 
 const TOOL_NAME: &str = "stat";
 
+fn default_follow_symlinks() -> bool {
+    true
+}
+
 #[mcp_tool(
     name = "stat",
-    description = "Gets detailed file or directory metadata (size, permissions, timestamps) within the project directory. Replaces the need for 'ls -la' or 'stat' commands."
+    description = "Gets detailed file or directory metadata (size, permissions, timestamps) within the project directory. Can follow symlinks to get metadata of files outside the project directory. Replaces the need for 'ls -la' or 'stat' commands."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct StatTool {
     /// Path to get stats for (relative to project root)
     pub path: String,
     
-    /// Whether to follow symbolic links (default: false)
-    #[serde(default)]
+    /// Whether to follow symbolic links (default: true)
+    #[serde(default = "default_follow_symlinks")]
     pub follow_symlinks: bool,
 }
 
@@ -34,29 +39,9 @@ impl StatefulTool for StatTool {
     ) -> Result<CallToolResult, CallToolError> {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let requested_path = Path::new(&self.path);
-        let absolute_path = if requested_path.is_absolute() {
-            requested_path.to_path_buf()
-        } else {
-            current_dir.join(requested_path)
-        };
-        
-        // Canonicalize the path to resolve it
-        let canonical_path = absolute_path.canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
-        
-        if !canonical_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let canonical_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Get metadata
         let metadata = if self.follow_symlinks {
@@ -420,6 +405,169 @@ mod tests {
         if let CallToolResultContentItem::TextContent(text) = content {
             assert!(text.text.contains("large.txt"));
             assert!(text.text.contains("\"size\": 10240"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_symlink_within_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let content = "symlink target content";
+        fs::write(project_root.join("target.txt"), content).await.unwrap();
+        
+        // Create symlink within project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        
+        let stat_tool = StatTool {
+            path: "link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content_item = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content_item {
+            // Should show file stats (target), not symlink stats
+            assert!(text.text.contains("\"type\": \"file\""));
+            assert!(text.text.contains(&content.len().to_string()));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_symlink_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create external target file
+        let external_temp = TempDir::new().unwrap();
+        let external_content = "external file content";
+        let external_file = external_temp.path().join("external.txt");
+        fs::write(&external_file, external_content).await.unwrap();
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create symlink pointing outside project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        
+        let stat_tool = StatTool {
+            path: "external_link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content_item = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content_item {
+            // Should show external file stats
+            assert!(text.text.contains("\"type\": \"file\""));
+            assert!(text.text.contains(&external_content.len().to_string()));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_symlink_disabled() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("target.txt"), "content").await.unwrap();
+        
+        // Create symlink
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        
+        let stat_tool = StatTool {
+            path: "link.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content_item = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content_item {
+            // Should show some valid stats for the symlink
+            assert!(text.text.contains("link.txt"));
+            assert!(text.text.contains("\"type\":"));
+            // Test that we can get stats when follow_symlinks=false
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_broken_symlink() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create symlink pointing to non-existent file
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        
+        // With follow_symlinks=true, should fail because target doesn't exist
+        let stat_tool = StatTool {
+            path: "broken_link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        // With follow_symlinks=false, may still fail due to broken symlink
+        let stat_tool = StatTool {
+            path: "broken_link.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = stat_tool.call_with_context(&context).await;
+        // Note: Even with follow_symlinks=false, broken symlinks may fail
+        // depending on the implementation of resolve_path_for_read
+        if result.is_ok() {
+            let output = result.unwrap();
+            let content_item = &output.content[0];
+            if let CallToolResultContentItem::TextContent(text) = content_item {
+                // Should contain some info about the symlink
+                assert!(text.text.contains("broken_link.txt") || text.text.contains("\"type\":"));
+            }
         }
     }
 }

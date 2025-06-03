@@ -1,6 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
-use crate::tools::utils::{format_count, format_path};
+use crate::tools::utils::{format_count, format_path, resolve_path_for_read};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -13,7 +13,7 @@ const TOOL_NAME: &str = "wc";
 
 #[mcp_tool(
     name = "wc",
-    description = "Counts lines, words, characters, and bytes in text files within the project directory. Prefer this over the Unix 'wc' command when analyzing project files."
+    description = "Counts lines, words, characters, and bytes in text files within the project directory. Can follow symlinks to count files outside the project directory. Prefer this over the Unix 'wc' command when analyzing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WcTool {
@@ -35,9 +35,17 @@ pub struct WcTool {
     /// Whether to count bytes (default: false)
     #[serde(default)]
     pub count_bytes: bool,
+    
+    /// Follow symlinks to count files outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_true() -> bool {
+    true
+}
+
+fn default_follow_symlinks() -> bool {
     true
 }
 
@@ -50,25 +58,9 @@ impl StatefulTool for WcTool {
         // Get project root and resolve path
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let target_path = current_dir.join(&self.path);
-        
-        // Security check - ensure path is within project directory
-        let normalized_path = target_path
-            .canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
-            
-        if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let normalized_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Check if file exists
         if !normalized_path.exists() {
@@ -120,7 +112,7 @@ impl StatefulTool for WcTool {
 
         
         // Format path relative to project root
-        let relative_path = normalized_path.strip_prefix(&current_dir)
+        let relative_path = normalized_path.strip_prefix(&project_root)
             .unwrap_or(&normalized_path);
         
         // Create human-readable output
@@ -188,6 +180,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: true,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -221,6 +214,7 @@ mod tests {
             count_words: false,
             count_chars: false,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -250,6 +244,7 @@ mod tests {
             count_words: true,
             count_chars: false,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -279,6 +274,7 @@ mod tests {
             count_words: false,
             count_chars: true,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -308,6 +304,7 @@ mod tests {
             count_words: false,
             count_chars: false,
             count_bytes: true,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -336,6 +333,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: true,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -365,6 +363,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -394,6 +393,7 @@ mod tests {
             count_words: true,
             count_chars: false,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -421,6 +421,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: true,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -450,6 +451,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -474,6 +476,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -494,6 +497,7 @@ mod tests {
             count_words: true,
             count_chars: true,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -518,6 +522,7 @@ mod tests {
             count_words: default_true(),
             count_chars: default_true(),
             count_bytes: false, // default is false for bytes
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -553,6 +558,7 @@ mod tests {
             count_words: true,
             count_chars: false,
             count_bytes: false,
+            follow_symlinks: true,
         };
         
         let result = wc_tool.call_with_context(&context).await;
@@ -566,5 +572,147 @@ mod tests {
             assert!(content.contains("100 lines"));
             assert!(content.contains("500 words")); // Each line has 5 words × 100 lines
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wc_symlink_to_file_within_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file with known content
+        let target_content = "Line one\nLine two\nLine three";
+        create_test_file(temp_dir.path(), "target.txt", target_content).await;
+        
+        // Create a symlink to the target file
+        let target_path = temp_dir.path().join("target.txt");
+        let symlink_path = temp_dir.path().join("link_to_target.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let wc_tool = WcTool {
+            path: "link_to_target.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+            follow_symlinks: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should count the target file content, showing resolved target path
+            assert!(content.contains("Word count for"));
+            assert!(content.contains("target.txt")); // Shows resolved target path
+            assert!(content.contains("3 lines"));
+            assert!(content.contains("6 words")); // "Line one", "Line two", "Line three" = 6 words
+            assert!(content.contains("characters"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wc_symlink_to_file_outside_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project directory
+        let external_temp_dir = TempDir::new().unwrap();
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        let external_content = "External line one\nExternal line two";
+        fs::write(&external_target, external_content).await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let wc_tool = WcTool {
+            path: "link_to_external.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: false,
+            count_bytes: false,
+            follow_symlinks: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            
+            // Should count the external target file content, showing resolved external target path
+            assert!(content.contains("Word count for"));
+            assert!(content.contains("external_target.txt")); // Shows resolved external target path
+            assert!(content.contains("2 lines"));
+            assert!(content.contains("6 words")); // "External line one", "External line two" = 6 words
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wc_symlink_with_follow_disabled() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project to ensure symlink behavior is tested
+        let external_temp_dir = TempDir::new().unwrap();
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        let external_content = "External target content";
+        fs::write(&external_target, external_content).await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let wc_tool = WcTool {
+            path: "link_to_external.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+            follow_symlinks: false,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        // With follow_symlinks=false, the symlink should not be resolved,
+        // so it should fail when the canonicalized path is outside the project
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:wc"));
+        assert!(error_str.contains("outside the project directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_wc_broken_symlink() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a symlink to a non-existent target
+        let target_path = temp_dir.path().join("nonexistent_target.txt");
+        let symlink_path = temp_dir.path().join("broken_link.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let wc_tool = WcTool {
+            path: "broken_link.txt".to_string(),
+            count_lines: true,
+            count_words: true,
+            count_chars: true,
+            count_bytes: false,
+            follow_symlinks: true,
+        };
+        
+        let result = wc_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:wc"));
+        // Should indicate file not found since the symlink target doesn't exist
+        assert!(error_str.contains("not found") || error_str.contains("No such file"));
     }
 }

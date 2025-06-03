@@ -1,6 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
-use crate::tools::utils::{format_size, format_path};
+use crate::tools::utils::{format_size, format_path, resolve_path_for_read};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "hash";
 
 #[mcp_tool(
     name = "hash",
-    description = "Calculates checksums/hashes of files within the project directory using various algorithms (MD5, SHA1, SHA256, SHA512). Prefer this over system hash commands when verifying project files."
+    description = "Calculates checksums/hashes of files within the project directory using various algorithms (MD5, SHA1, SHA256, SHA512). Can follow symlinks to hash files outside the project directory. Prefer this over system hash commands when verifying project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct HashTool {
@@ -25,10 +25,18 @@ pub struct HashTool {
     /// Hash algorithm to use: "md5", "sha1", "sha256", "sha512" (default: "sha256")
     #[serde(default = "default_algorithm")]
     pub algorithm: String,
+    
+    /// Follow symlinks to hash files outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_algorithm() -> String {
     "sha256".to_string()
+}
+
+fn default_follow_symlinks() -> bool {
+    true
 }
 
 #[async_trait]
@@ -40,25 +48,9 @@ impl StatefulTool for HashTool {
         // Get project root and resolve path
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let target_path = current_dir.join(&self.path);
-        
-        // Security check - ensure path is within project directory
-        let normalized_path = target_path
-            .canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
-            
-        if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let normalized_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Check if file exists
         if !normalized_path.exists() {
@@ -94,7 +86,7 @@ impl StatefulTool for HashTool {
         let hash = calculate_simple_hash(&normalized_path, &algorithm).await?;
         
         // Format path relative to project root
-        let relative_path = normalized_path.strip_prefix(&current_dir)
+        let relative_path = normalized_path.strip_prefix(&project_root)
             .unwrap_or(&normalized_path);
         
         // Create human-readable output
@@ -225,6 +217,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "test.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -256,6 +249,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "test.txt".to_string(),
             algorithm: default_algorithm(), // Should be sha256
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -283,6 +277,7 @@ mod tests {
             let hash_tool = HashTool {
                 path: "test.txt".to_string(),
                 algorithm: algo.to_string(),
+                follow_symlinks: true,
             };
             
             let result = hash_tool.call_with_context(&context).await;
@@ -311,11 +306,13 @@ mod tests {
         let hash_tool1 = HashTool {
             path: "file1.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let hash_tool2 = HashTool {
             path: "file2.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result1 = hash_tool1.call_with_context(&context).await.unwrap();
@@ -344,6 +341,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "large.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -365,6 +363,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "empty.txt".to_string(),
             algorithm: "md5".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -384,6 +383,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "nonexistent.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -405,6 +405,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "testdir".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -423,6 +424,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "test.txt".to_string(),
             algorithm: "invalid".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -441,6 +443,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "../outside.txt".to_string(),
             algorithm: "sha256".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -465,6 +468,7 @@ mod tests {
         let hash_tool = HashTool {
             path: "subdir/nested.txt".to_string(),
             algorithm: "sha1".to_string(),
+            follow_symlinks: true,
         };
         
         let result = hash_tool.call_with_context(&context).await;
@@ -475,5 +479,133 @@ mod tests {
             assert!(text.text.contains("SHA1 hash of"));
             assert!(text.text.contains("subdir/nested.txt"));
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_hash_symlink_to_file_within_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file
+        create_test_file(temp_dir.path(), "target.txt", "Target file for hash symlink test").await;
+        
+        // Create a symlink to the target file
+        let target_path = temp_dir.path().join("target.txt");
+        let symlink_path = temp_dir.path().join("link_to_target.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let hash_tool = HashTool {
+            path: "link_to_target.txt".to_string(),
+            algorithm: "sha256".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = hash_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            assert!(content.contains("SHA256 hash of"));
+            assert!(content.contains("target.txt")); // Shows resolved target path
+            // Check that hash is 64 characters (SHA256)
+            let lines: Vec<&str> = content.lines().collect();
+            if lines.len() >= 2 {
+                assert_eq!(lines[1].len(), 64);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_hash_symlink_to_file_outside_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project directory
+        let external_temp_dir = tempfile::tempdir().expect("Failed to create external temp directory");
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        fs::write(&external_target, "External file for hash test").await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let hash_tool = HashTool {
+            path: "link_to_external.txt".to_string(),
+            algorithm: "md5".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = hash_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        if let Some(CallToolResultContentItem::TextContent(text)) = output.content.first() {
+            let content = &text.text;
+            assert!(content.contains("MD5 hash of"));
+            assert!(content.contains("external_target.txt")); // Shows resolved external target path
+            // Check that hash is 32 characters (MD5)
+            let lines: Vec<&str> = content.lines().collect();
+            if lines.len() >= 2 {
+                assert_eq!(lines[1].len(), 32);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_hash_symlink_with_follow_disabled() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project to ensure symlink behavior is tested
+        let external_temp_dir = tempfile::tempdir().expect("Failed to create external temp directory");
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        fs::write(&external_target, "External target content").await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let hash_tool = HashTool {
+            path: "link_to_external.txt".to_string(),
+            algorithm: "sha256".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = hash_tool.call_with_context(&context).await;
+        // With follow_symlinks=false, the symlink should not be resolved,
+        // so it should fail when the canonicalized path is outside the project
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:hash"));
+        assert!(error_str.contains("outside the project directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_hash_broken_symlink() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a symlink to a non-existent target
+        let target_path = temp_dir.path().join("nonexistent_target.txt");
+        let symlink_path = temp_dir.path().join("broken_link.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let hash_tool = HashTool {
+            path: "broken_link.txt".to_string(),
+            algorithm: "sha256".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = hash_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:hash"));
+        // Should indicate file not found since the symlink target doesn't exist
+        assert!(error_str.contains("not found") || error_str.contains("No such file"));
     }
 }

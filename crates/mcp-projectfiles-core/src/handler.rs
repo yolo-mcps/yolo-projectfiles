@@ -199,6 +199,7 @@ pub async fn test_handler() -> anyhow::Result<()> {
         sort_by: "name".to_string(),
         show_hidden: false,
         show_metadata: false,
+        follow_symlinks: true,
     };
 
     match file_list_tool.call().await {

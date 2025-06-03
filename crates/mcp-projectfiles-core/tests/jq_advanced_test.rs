@@ -39,6 +39,7 @@ async fn test_array_iteration() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -67,6 +68,7 @@ async fn test_map_operation() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -94,6 +96,7 @@ async fn test_select_operation() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -127,6 +130,7 @@ async fn test_pipe_operations() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -152,6 +156,7 @@ async fn test_keys_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -178,6 +183,7 @@ async fn test_values_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -210,6 +216,7 @@ async fn test_length_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -224,6 +231,7 @@ async fn test_length_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -238,6 +246,7 @@ async fn test_length_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -266,6 +275,7 @@ async fn test_type_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -279,6 +289,7 @@ async fn test_type_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -306,6 +317,7 @@ async fn test_comparison_in_select() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -324,6 +336,7 @@ async fn test_comparison_in_select() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -366,6 +379,7 @@ async fn test_complex_nested_operations() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -408,6 +422,7 @@ async fn test_recursive_descent() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -443,6 +458,7 @@ async fn test_wildcard_query() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -482,6 +498,7 @@ async fn test_array_wildcard() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -529,6 +546,7 @@ async fn test_complex_recursive_and_filter() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -566,6 +584,7 @@ async fn test_object_construction() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -594,6 +613,7 @@ async fn test_to_entries() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -630,6 +650,7 @@ async fn test_from_entries() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -661,6 +682,7 @@ async fn test_object_construction_with_map() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -694,6 +716,7 @@ async fn test_arithmetic_operations() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -707,6 +730,7 @@ async fn test_arithmetic_operations() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -720,6 +744,7 @@ async fn test_arithmetic_operations() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -743,6 +768,7 @@ async fn test_string_concatenation() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -765,6 +791,7 @@ async fn test_array_concatenation() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -793,6 +820,7 @@ async fn test_arithmetic_in_map() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -806,6 +834,7 @@ async fn test_arithmetic_in_map() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -831,6 +860,7 @@ async fn test_string_functions() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -844,6 +874,7 @@ async fn test_string_functions() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -857,6 +888,7 @@ async fn test_string_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -871,6 +903,7 @@ async fn test_string_functions() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -884,6 +917,7 @@ async fn test_string_functions() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -907,6 +941,7 @@ async fn test_join_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -920,6 +955,7 @@ async fn test_join_function() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -945,6 +981,7 @@ async fn test_string_functions_in_map() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -958,6 +995,7 @@ async fn test_string_functions_in_map() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -983,6 +1021,7 @@ async fn test_if_then_else_basic() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -996,6 +1035,7 @@ async fn test_if_then_else_basic() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1009,6 +1049,7 @@ async fn test_if_then_else_basic() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1032,6 +1073,7 @@ async fn test_if_then_else_nested() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1059,6 +1101,7 @@ async fn test_if_then_else_with_expressions() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1072,6 +1115,7 @@ async fn test_if_then_else_with_expressions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1100,6 +1144,7 @@ async fn test_if_then_else_in_map() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1131,6 +1176,7 @@ async fn test_boolean_operators() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1144,6 +1190,7 @@ async fn test_boolean_operators() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1157,6 +1204,7 @@ async fn test_boolean_operators() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1170,6 +1218,7 @@ async fn test_boolean_operators() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1197,6 +1246,7 @@ async fn test_alternative_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1210,6 +1260,7 @@ async fn test_alternative_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1223,6 +1274,7 @@ async fn test_alternative_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1236,6 +1288,7 @@ async fn test_alternative_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1263,6 +1316,7 @@ async fn test_optional_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1276,6 +1330,7 @@ async fn test_optional_operator() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1290,6 +1345,7 @@ async fn test_optional_operator() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1304,6 +1360,7 @@ async fn test_optional_operator() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1329,6 +1386,7 @@ async fn test_try_catch() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1342,6 +1400,7 @@ async fn test_try_catch() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1364,6 +1423,7 @@ async fn test_array_add_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1382,6 +1442,7 @@ async fn test_array_add_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1404,6 +1465,7 @@ async fn test_array_min_max_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1419,6 +1481,7 @@ async fn test_array_min_max_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1440,6 +1503,7 @@ async fn test_array_unique_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1463,6 +1527,7 @@ async fn test_array_reverse_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1486,6 +1551,7 @@ async fn test_array_sort_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1504,6 +1570,7 @@ async fn test_array_sort_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1530,6 +1597,7 @@ async fn test_array_sort_by_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1552,6 +1620,7 @@ async fn test_array_sort_by_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1582,6 +1651,7 @@ async fn test_array_flatten_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1597,6 +1667,7 @@ async fn test_array_flatten_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1624,6 +1695,7 @@ async fn test_array_group_by_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1662,6 +1734,7 @@ async fn test_array_slicing() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1677,6 +1750,7 @@ async fn test_array_slicing() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1692,6 +1766,7 @@ async fn test_array_slicing() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1712,6 +1787,7 @@ async fn test_array_slicing() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1735,6 +1811,7 @@ async fn test_indices_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1753,6 +1830,7 @@ async fn test_indices_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1779,6 +1857,7 @@ async fn test_has_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1794,6 +1873,7 @@ async fn test_has_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1821,6 +1901,7 @@ async fn test_del_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1851,6 +1932,7 @@ async fn test_with_entries_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1890,6 +1972,7 @@ async fn test_paths_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1928,6 +2011,7 @@ async fn test_string_test_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1946,6 +2030,7 @@ async fn test_string_test_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1968,6 +2053,7 @@ async fn test_string_match_function() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1995,6 +2081,7 @@ async fn test_string_trim_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2013,6 +2100,7 @@ async fn test_string_trim_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2036,6 +2124,7 @@ async fn test_math_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2054,6 +2143,7 @@ async fn test_math_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2072,6 +2162,7 @@ async fn test_math_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2090,6 +2181,7 @@ async fn test_math_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2108,6 +2200,7 @@ async fn test_math_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2131,6 +2224,7 @@ async fn test_debugging_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -2147,6 +2241,7 @@ async fn test_debugging_functions() {
         output_format: "json".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;

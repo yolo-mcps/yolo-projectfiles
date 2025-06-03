@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, schema_utils::CallToolError,
@@ -76,6 +77,9 @@ pub struct TomlQueryTool {
     /// Create backup before writing (default: true for write operations)
     #[serde(default = "default_backup")]
     pub backup: bool,
+    /// Follow symlinks when reading files (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_operation() -> String {
@@ -87,6 +91,10 @@ fn default_output_format() -> String {
 }
 
 fn default_backup() -> bool {
+    true
+}
+
+fn default_follow_symlinks() -> bool {
     true
 }
 
@@ -532,36 +540,38 @@ impl StatefulTool for TomlQueryTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Failed to get project root: {}", e))))?;
         
-        // Validate and resolve file path
-        let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
-        let file_path = project_root.join(&relative_path);
-        
-        // For read operations, check if file exists first
-        let canonical_path = if self.operation == "read" || (self.operation == "write" && file_path.exists()) {
-            // File must exist for read operations or write operations on existing files
-            if !file_path.exists() {
-                return Err(CallToolError::from(tool_errors::file_not_found("tomlq", &self.file_path)));
-            }
-            file_path.canonicalize()
-                .map_err(|_| CallToolError::from(tool_errors::file_not_found("tomlq", &self.file_path)))?
+        // For read operations, use symlink-aware path resolution
+        let canonical_path = if self.operation == "read" {
+            resolve_path_for_read(&self.file_path, &project_root, self.follow_symlinks, "tomlq")
+                .map_err(|e| CallToolError::from(e))?
         } else {
-            // For write operations on new files, canonicalize parent and reconstruct
-            if let Some(parent) = file_path.parent() {
-                let canonical_parent = parent.canonicalize()
-                    .map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Failed to resolve parent directory: {}", e))))?;
-                
-                if let Some(file_name) = file_path.file_name() {
-                    canonical_parent.join(file_name)
+            // For write operations, use the old validation to restrict to project directory
+            let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
+            let file_path = project_root.join(&relative_path);
+            
+            // For write operations, check if file exists first
+            if file_path.exists() {
+                file_path.canonicalize()
+                    .map_err(|_| CallToolError::from(tool_errors::file_not_found("tomlq", &self.file_path)))?
+            } else {
+                // For write operations on new files, canonicalize parent and reconstruct
+                if let Some(parent) = file_path.parent() {
+                    let canonical_parent = parent.canonicalize()
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Failed to resolve parent directory: {}", e))))?;
+                    
+                    if let Some(file_name) = file_path.file_name() {
+                        canonical_parent.join(file_name)
+                    } else {
+                        return Err(CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Invalid file path: '{}'", self.file_path))));
+                    }
                 } else {
                     return Err(CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Invalid file path: '{}'", self.file_path))));
                 }
-            } else {
-                return Err(CallToolError::from(tool_errors::invalid_input("tomlq", &format!("Invalid file path: '{}'", self.file_path))));
             }
         };
         
         // Read the TOML file
-        let mut data = self.read_toml_file(&file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
+        let mut data = self.read_toml_file(&canonical_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
         
         let mut modified = false;
         
@@ -583,7 +593,7 @@ impl StatefulTool for TomlQueryTool {
                     .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
                 
                 // Check if this is a new file (doesn't exist)
-                let is_new_file = !file_path.exists();
+                let is_new_file = !canonical_path.exists();
                 
                 if !is_new_file && !read_files.contains(&canonical_path) {
                     return Err(CallToolError::from(tool_errors::operation_not_permitted(
@@ -599,7 +609,7 @@ impl StatefulTool for TomlQueryTool {
                         modified = true;
                         
                         // Write the modified data back to file
-                        self.write_toml_file(&file_path, &data, self.backup).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
+                        self.write_toml_file(&canonical_path, &data, self.backup).map_err(|e| CallToolError::from(tool_errors::invalid_input("tomlq", &e.to_string())))?;
                         data.clone()
                     } else {
                         return Err(CallToolError::from(tool_errors::invalid_input("tomlq", 

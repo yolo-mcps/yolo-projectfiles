@@ -54,6 +54,7 @@ async fn test_jq_tool_read_basic() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -70,6 +71,7 @@ async fn test_jq_tool_read_basic() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = nested_tool.call_with_context(&context).await;
@@ -116,6 +118,7 @@ async fn test_jq_tool_complex_paths() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -132,6 +135,7 @@ async fn test_jq_tool_complex_paths() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = array_tool.call_with_context(&context).await;
@@ -162,6 +166,7 @@ async fn test_jq_tool_write_operations() {
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     let _ = read_tool.call_with_context(&context).await;
     
@@ -173,6 +178,7 @@ async fn test_jq_tool_write_operations() {
         output_format: "json".to_string(),
         in_place: true,
         backup: true,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -213,6 +219,7 @@ config:
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -228,6 +235,7 @@ config:
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = nested_tool.call_with_context(&context).await;
@@ -265,6 +273,7 @@ port = 5432
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -280,6 +289,7 @@ port = 5432
         output_format: "raw".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = nested_tool.call_with_context(&context).await;
@@ -309,6 +319,7 @@ values = [1, 2, 3]
         output_format: "toml".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -325,6 +336,7 @@ values = [1, 2, 3]
         output_format: "toml".to_string(),
         in_place: false,
         backup: false,
+        follow_symlinks: true,
     };
     
     let result = array_tool.call_with_context(&context).await;

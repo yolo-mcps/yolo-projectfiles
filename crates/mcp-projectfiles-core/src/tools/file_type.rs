@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
 use std::path::Path;
 use rust_mcp_schema::{
@@ -12,14 +13,21 @@ use tokio::io::AsyncReadExt;
 
 const TOOL_NAME: &str = "file_type";
 
+fn default_follow_symlinks() -> bool {
+    true
+}
+
 #[mcp_tool(
     name = "file_type",
-    description = "Detects file type, encoding, and whether it's text or binary within the project directory. Provides MIME type detection for common file formats. Prefer this over system 'file' command when analyzing project files."
+    description = "Detects file type, encoding, and whether it's text or binary within the project directory. Provides MIME type detection for common file formats. Can follow symlinks to analyze files outside the project directory. Prefer this over system 'file' command when analyzing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FileTypeTool {
     /// Path to the file to analyze (relative to project root)
     pub path: String,
+    /// Follow symlinks to analyze files outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 #[async_trait]
@@ -31,25 +39,9 @@ impl StatefulTool for FileTypeTool {
         // Get project root and resolve path
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let target_path = current_dir.join(&self.path);
-        
-        // Security check - ensure path is within project directory
-        let normalized_path = target_path
-            .canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path: {}", e))))?;
-            
-        if !normalized_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let normalized_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Check if file exists
         if !normalized_path.exists() {
@@ -340,6 +332,13 @@ mod tests {
             panic!("Expected text content");
         }
     }
+    
+    fn create_file_type_tool(path: &str) -> FileTypeTool {
+        FileTypeTool {
+            path: path.to_string(),
+            follow_symlinks: true,
+        }
+    }
 
     #[tokio::test]
     async fn test_file_type_text_file() {
@@ -347,9 +346,7 @@ mod tests {
         let content = "Hello, World!\nThis is a text file.";
         create_test_file(temp_dir.path(), "text.txt", content.as_bytes()).await;
         
-        let file_type_tool = FileTypeTool {
-            path: "text.txt".to_string(),
-        };
+        let file_type_tool = create_file_type_tool("text.txt");
         
         let result = file_type_tool.call_with_context(&context).await;
         assert!(result.is_ok());
@@ -374,9 +371,7 @@ mod tests {
         let binary_content = vec![0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD];
         create_test_file(temp_dir.path(), "binary.bin", &binary_content).await;
         
-        let file_type_tool = FileTypeTool {
-            path: "binary.bin".to_string(),
-        };
+        let file_type_tool = create_file_type_tool("binary.bin");
         
         let result = file_type_tool.call_with_context(&context).await;
         assert!(result.is_ok());
@@ -398,6 +393,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "main.rs".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -419,6 +415,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "script.js".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -440,6 +437,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "data.json".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -462,6 +460,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "utf8_bom.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -485,6 +484,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "utf16.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -504,6 +504,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "empty.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -526,6 +527,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "document.pdf".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -547,6 +549,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "image.png".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -567,6 +570,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "photo.jpg".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -587,6 +591,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "archive.zip".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -606,6 +611,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "script".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -625,6 +631,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "nonexistent.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -645,6 +652,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "testdir".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -661,6 +669,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "../outside.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -680,6 +689,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "large.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -703,6 +713,7 @@ mod tests {
         
         let file_type_tool = FileTypeTool {
             path: "subdir/nested.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = file_type_tool.call_with_context(&context).await;
@@ -713,5 +724,126 @@ mod tests {
         
         assert_eq!(json["path"], "subdir/nested.txt");
         assert_eq!(json["is_text"], true);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_file_type_symlink_to_file_within_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file
+        let target_content = "Target file content for symlink test";
+        create_test_file(temp_dir.path(), "target.txt", target_content.as_bytes()).await;
+        
+        // Create a symlink to the target file
+        let target_path = temp_dir.path().join("target.txt");
+        let symlink_path = temp_dir.path().join("link_to_target.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let file_type_tool = FileTypeTool {
+            path: "link_to_target.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = file_type_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let json = parse_output(&output).await;
+        
+        // Should analyze the target file, not the symlink itself
+        assert_eq!(json["path"], "link_to_target.txt");
+        assert_eq!(json["is_text"], true);
+        assert_eq!(json["mime_type"], "text/plain");
+        assert_eq!(json["extension"], "txt");
+        assert!(json["size"].as_u64().unwrap() > 0); // Should have the size of the target file
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_file_type_symlink_to_file_outside_project() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project directory
+        let external_temp_dir = TempDir::new().unwrap();
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        fs::write(&external_target, "External file content").await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let file_type_tool = FileTypeTool {
+            path: "link_to_external.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = file_type_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let json = parse_output(&output).await;
+        
+        // Should analyze the external target file
+        assert_eq!(json["path"], "link_to_external.txt");
+        assert_eq!(json["is_text"], true);
+        assert_eq!(json["mime_type"], "text/plain");
+        assert_eq!(json["extension"], "txt");
+        assert!(json["size"].as_u64().unwrap() > 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_file_type_symlink_with_follow_disabled() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a target file outside the project to ensure symlink behavior is tested
+        let external_temp_dir = TempDir::new().unwrap();
+        let external_target = external_temp_dir.path().join("external_target.txt");
+        fs::write(&external_target, "External target content").await.expect("Failed to create external file");
+        
+        // Create a symlink within the project to the external file
+        let symlink_path = temp_dir.path().join("link_to_external.txt");
+        std::os::unix::fs::symlink(&external_target, &symlink_path).expect("Failed to create symlink");
+        
+        let file_type_tool = FileTypeTool {
+            path: "link_to_external.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = file_type_tool.call_with_context(&context).await;
+        // With follow_symlinks=false, the symlink should not be resolved,
+        // so it should fail when the canonicalized path is outside the project
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:file_type"));
+        assert!(error_str.contains("outside the project directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_file_type_broken_symlink() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        // Create a symlink to a non-existent target
+        let target_path = temp_dir.path().join("nonexistent_target.txt");
+        let symlink_path = temp_dir.path().join("broken_link.txt");
+        std::os::unix::fs::symlink(&target_path, &symlink_path).expect("Failed to create symlink");
+        
+        let file_type_tool = FileTypeTool {
+            path: "broken_link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = file_type_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error = result.unwrap_err();
+        let error_str = error.to_string();
+        assert!(error_str.contains("projectfiles:file_type"));
+        // Should indicate file not found since the symlink target doesn't exist
+        assert!(error_str.contains("not found") || error_str.contains("No such file"));
     }
 }

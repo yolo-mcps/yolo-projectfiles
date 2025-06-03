@@ -142,6 +142,67 @@ pub fn format_number(num: usize) -> String {
     result.chars().rev().collect()
 }
 
+/// Resolve a path within the project directory, optionally following symlinks
+/// for read-only operations. This allows symlinks within the project to point
+/// to content outside the project directory for reading purposes only.
+pub fn resolve_path_for_read(
+    path: &str,
+    project_root: &Path,
+    follow_symlinks: bool,
+    tool_name: &str,
+) -> Result<PathBuf, CallToolError> {
+    let requested_path = Path::new(path);
+    let absolute_path = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        project_root.join(requested_path)
+    };
+
+    // For symlink following, we first check if the path exists without canonicalizing
+    if follow_symlinks && absolute_path.exists() {
+        // If the path is a symlink and we want to follow it, resolve it
+        if absolute_path.is_symlink() {
+            match absolute_path.canonicalize() {
+                Ok(target_path) => {
+                    // Allow reading the symlink target even if it's outside the project
+                    return Ok(target_path);
+                }
+                Err(_e) => {
+                    return Err(CallToolError::from(tool_errors::file_not_found(
+                        tool_name,
+                        path
+                    )));
+                }
+            }
+        }
+    }
+
+    // For regular files or when not following symlinks, use standard validation
+    let canonical_path = absolute_path.canonicalize()
+        .map_err(|_e| CallToolError::from(tool_errors::file_not_found(
+            tool_name,
+            path
+        )))?;
+
+    // Canonicalize project root for comparison
+    let canonical_project_root = project_root.canonicalize()
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(
+            tool_name,
+            &format!("Failed to canonicalize project root: {}", e)
+        )))?;
+
+    // Check if the resolved path is within the project directory
+    if !canonical_path.starts_with(&canonical_project_root) {
+        return Err(CallToolError::from(tool_errors::access_denied(
+            tool_name,
+            path,
+            "Path is outside the project directory"
+        )));
+    }
+
+    Ok(canonical_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

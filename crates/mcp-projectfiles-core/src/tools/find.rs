@@ -11,13 +11,13 @@ use chrono::{Local, Duration};
 use std::time::SystemTime;
 use async_trait::async_trait;
 use crate::config::tool_errors;
-use crate::tools::utils::{format_size, format_count};
+use crate::tools::utils::{format_size, format_count, resolve_path_for_read};
 
 const TOOL_NAME: &str = "find";
 
 #[mcp_tool(
     name = "find",
-    description = "Advanced file search within the project directory. Supports searching by name pattern, file type, size, and modification date. Prefer this over system 'find' command when searching project files. More powerful than basic glob/grep."
+    description = "Advanced file search within the project directory. Supports searching by name pattern, file type, size, and modification date. Can follow symlinks to search in directories outside the project directory. Prefer this over system 'find' command when searching project files. More powerful than basic glob/grep."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FindTool {
@@ -45,9 +45,13 @@ pub struct FindTool {
     #[serde(default)]
     pub max_depth: Option<u32>,
     
-    /// Whether to follow symbolic links (default: false)
+    /// Whether to follow symbolic links during traversal and for the search path (default: false for traversal safety)
     #[serde(default)]
     pub follow_symlinks: bool,
+    
+    /// Follow symlinks for the initial search path (default: true)
+    #[serde(default = "default_true")]
+    pub follow_search_path: bool,
     
     /// Maximum number of results to return (default: 1000)
     #[serde(default = "default_max_results")]
@@ -66,6 +70,10 @@ fn default_max_results() -> u32 {
     1000
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug)]
 struct SearchResult {
     relative_path: String,
@@ -81,29 +89,9 @@ impl StatefulTool for FindTool {
     ) -> Result<CallToolResult, CallToolError> {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        let search_path = Path::new(&self.path);
-        let absolute_search_path = if search_path.is_absolute() {
-            search_path.to_path_buf()
-        } else {
-            current_dir.join(search_path)
-        };
-        
-        // Validate search path is within project
-        let canonical_search_path = absolute_search_path.canonicalize()
-            .map_err(|_e| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path)))?;
-        
-        if !canonical_search_path.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Search path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve search path with symlink support
+        let canonical_search_path = resolve_path_for_read(&self.path, &project_root, self.follow_search_path, TOOL_NAME)?;
         
         // Parse filters
         let name_pattern = self.name_pattern.as_ref()
@@ -127,7 +115,7 @@ impl StatefulTool for FindTool {
         
         self.search_directory(
             &canonical_search_path,
-            &current_dir,
+            &project_root,
             &name_pattern,
             &size_filter,
             &date_filter,
@@ -480,6 +468,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -515,6 +504,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -549,6 +539,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -571,6 +562,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -603,6 +595,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -638,6 +631,7 @@ mod tests {
             date_filter: None,
             max_depth: Some(1),
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -672,6 +666,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 3,
         };
         
@@ -703,6 +698,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -730,6 +726,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         
@@ -755,6 +752,7 @@ mod tests {
             date_filter: None,
             max_depth: None,
             follow_symlinks: false,
+            follow_search_path: true,
             max_results: 1000,
         };
         

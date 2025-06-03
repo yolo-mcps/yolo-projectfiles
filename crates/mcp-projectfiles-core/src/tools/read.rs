@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -22,12 +23,16 @@ fn default_linenumbers() -> bool {
     true
 }
 
+fn default_follow_symlinks() -> bool {
+    true
+}
+
 fn default_binary_check() -> bool {
     true
 }
 
 
-#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers by default (format: line_number<tab>content). Use linenumbers:false to get raw content without line numbers, which is useful when reading files for editing. Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
+#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers by default (format: line_number<tab>content). Use linenumbers:false to get raw content without line numbers, which is useful when reading files for editing. Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Can follow symlinks to read content outside the project directory. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ReadTool {
     /// Path to the file to read (relative to project root)
@@ -57,6 +62,9 @@ pub struct ReadTool {
     /// Show line numbers in output (default: true)
     #[serde(default = "default_linenumbers")]
     pub linenumbers: bool,
+    /// Follow symlinks to read content outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 #[async_trait]
@@ -68,27 +76,8 @@ impl StatefulTool for ReadTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
-        // Canonicalize project root for consistent path comparison
-        let canonical_project_root = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
-        
-        let requested_path = Path::new(&self.path);
-        let absolute_path = if requested_path.is_absolute() {
-            requested_path.to_path_buf()
-        } else {
-            project_root.join(requested_path)
-        };
-        
-        let canonical_path = absolute_path.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve path '{}': {}", self.path, e))))?;
-        
-        if !canonical_path.starts_with(&canonical_project_root) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve path with symlink support
+        let canonical_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
 
         if !canonical_path.exists() {
             return Err(CallToolError::from(tool_errors::file_not_found(
@@ -315,6 +304,7 @@ mod tests {
             case_insensitive: false,
             encoding: "utf-8".to_string(),
             linenumbers: true,
+            follow_symlinks: true,
         }
     }
 
@@ -406,7 +396,7 @@ mod tests {
         let result = test_read_tool_in_dir(&temp_dir, tool).await;
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to resolve path"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -774,5 +764,98 @@ mod tests {
         assert!(!output.contains("banana"));
         assert!(!output.contains("blueberry"));
         assert!(!output.contains("\t"));
+    }
+
+    // Symlink following tests
+    #[tokio::test]
+    async fn test_read_symlink_within_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "Content from target file";
+        let target_file = create_test_file(&temp_dir, "target.txt", content).await;
+        
+        // Create symlink within project directory
+        let symlink_path = temp_dir.path().join("link.txt");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(&target_file, &symlink_path).unwrap();
+        }
+        
+        let tool = create_read_tool("link.txt");
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        assert!(output.contains("Content from target file"));
+    }
+
+    #[tokio::test]
+    async fn test_read_symlink_outside_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let external_dir = TempDir::new().unwrap();
+        
+        // Create file outside project directory
+        let external_content = "External file content";
+        let external_file = external_dir.path().join("external.txt");
+        async_fs::write(&external_file, external_content).await.unwrap();
+        
+        // Create symlink inside project pointing to external file
+        let symlink_path = temp_dir.path().join("external_link.txt");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&external_file, &symlink_path).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(&external_file, &symlink_path).unwrap();
+        }
+        
+        // Should be able to read external file through symlink when follow_symlinks=true
+        let mut tool = create_read_tool("external_link.txt");
+        tool.follow_symlinks = true;
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        assert!(output.contains("External file content"));
+    }
+
+    #[tokio::test]
+    async fn test_read_symlink_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let external_dir = TempDir::new().unwrap();
+        
+        // Create file outside project directory
+        let external_content = "External file content";
+        let external_file = external_dir.path().join("external.txt");
+        async_fs::write(&external_file, external_content).await.unwrap();
+        
+        // Create symlink inside project pointing to external file
+        let symlink_path = temp_dir.path().join("external_link.txt");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&external_file, &symlink_path).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(&external_file, &symlink_path).unwrap();
+        }
+        
+        // Should not be able to read external file when follow_symlinks=false
+        let mut tool = create_read_tool("external_link.txt");
+        tool.follow_symlinks = false;
+        let result = test_read_tool_in_dir(&temp_dir, tool).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("outside the project directory"));
     }
 }

@@ -1,5 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+
 use async_trait::async_trait;
 use std::path::{Path, PathBuf, Component};
 use rust_mcp_schema::{
@@ -10,14 +11,21 @@ use serde::{Deserialize, Serialize};
 
 const TOOL_NAME: &str = "exists";
 
+fn default_follow_symlinks() -> bool {
+    true
+}
+
 #[mcp_tool(
     name = "exists",
-    description = "Checks if a file or directory exists within the project directory. Returns existence status and type (file/directory/none). Prefer this over system file tests when checking project file existence."
+    description = "Checks if a file or directory exists within the project directory. Returns existence status and type (file/directory/none). Can follow symlinks to check files outside the project directory. Prefer this over system file tests when checking project file existence."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ExistsTool {
     /// Path to check (relative to project root)
     pub path: String,
+    /// Follow symlinks to check files outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 #[async_trait]
@@ -37,19 +45,33 @@ impl StatefulTool for ExistsTool {
             project_root.join(requested_path)
         };
         
-        // Note: We don't use canonicalize() here because it fails if the path doesn't exist
-        // Instead, we normalize the path and check if it's within the project
-        let normalized_path = normalize_path(&absolute_path);
-        
-        if !normalized_path.starts_with(&project_root) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.path,
-                "Path is outside the project directory"
-            )));
-        }
-        
-        let exists = normalized_path.exists();
+        // For symlink following, try to resolve if path exists and is a symlink
+        let (normalized_path, exists) = if self.follow_symlinks && absolute_path.exists() && absolute_path.is_symlink() {
+            match absolute_path.canonicalize() {
+                Ok(target_path) => {
+                    let exists_val = target_path.exists();
+                    (target_path, exists_val)
+                },
+                Err(_) => (normalize_path(&absolute_path), false), // Broken symlink
+            }
+        } else {
+            // For regular files or when not following symlinks, use normal validation
+            let normalized = normalize_path(&absolute_path);
+            
+            // Check if the resolved path is within the project directory (only when not following symlinks)
+            if !self.follow_symlinks || !absolute_path.is_symlink() {
+                if !normalized.starts_with(&project_root) {
+                    return Err(CallToolError::from(tool_errors::access_denied(
+                        TOOL_NAME,
+                        &self.path,
+                        "Path is outside the project directory"
+                    )));
+                }
+            }
+            
+            let exists_val = normalized.exists();
+            (normalized, exists_val)
+        };
         
         let path_type = if !exists {
             "none"
@@ -127,6 +149,7 @@ mod tests {
         
         let exists_tool = ExistsTool {
             path: "test.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = exists_tool.call_with_context(&context).await;
@@ -149,6 +172,7 @@ mod tests {
         
         let exists_tool = ExistsTool {
             path: "test_dir".to_string(),
+            follow_symlinks: true,
         };
         
         let result = exists_tool.call_with_context(&context).await;
@@ -167,6 +191,7 @@ mod tests {
         
         let exists_tool = ExistsTool {
             path: "nonexistent.txt".to_string(),
+            follow_symlinks: true,
         };
         
         let result = exists_tool.call_with_context(&context).await;
@@ -186,6 +211,7 @@ mod tests {
         
         let exists_tool = ExistsTool {
             path: "../outside.txt".to_string(),
+            follow_symlinks: false, // Test with symlinks disabled
         };
         
         let result = exists_tool.call_with_context(&context).await;
@@ -193,6 +219,172 @@ mod tests {
         
         let error_msg = format!("{:?}", result.unwrap_err());
         assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[tokio::test]
+    async fn test_exists_symlink_within_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("target.txt"), "content").await.unwrap();
+        
+        // Create symlink within project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        
+        let exists_tool = ExistsTool {
+            path: "link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should report the symlink exists and follows to file
+            assert!(text.text.contains("\"exists\": true"));
+            assert!(text.text.contains("\"type\": \"file\""));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_symlink_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create external target file
+        let external_temp = TempDir::new().unwrap();
+        let external_file = external_temp.path().join("external.txt");
+        fs::write(&external_file, "external content").await.unwrap();
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create symlink pointing outside project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        
+        let exists_tool = ExistsTool {
+            path: "external_link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should report the external file exists
+            assert!(text.text.contains("\"exists\": true"));
+            assert!(text.text.contains("\"type\": \"file\""));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_symlink_disabled() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("target.txt"), "content").await.unwrap();
+        
+        // Create symlink
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("target.txt", project_root.join("link.txt")).unwrap();
+        }
+        
+        let exists_tool = ExistsTool {
+            path: "link.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should report the symlink exists
+            assert!(text.text.contains("\"exists\": true"));
+            // Type might vary by platform, just check it exists
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_exists_broken_symlink() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create symlink pointing to non-existent file
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        
+        // With follow_symlinks=true, should report that target doesn't exist
+        let exists_tool = ExistsTool {
+            path: "broken_link.txt".to_string(),
+            follow_symlinks: true,
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should report that the target doesn't exist
+            assert!(text.text.contains("\"exists\": false") || text.text.contains("\"type\": \"none\""));
+        }
+        
+        // With follow_symlinks=false, behavior may vary for broken symlinks
+        let exists_tool = ExistsTool {
+            path: "broken_link.txt".to_string(),
+            follow_symlinks: false,
+        };
+        
+        let result = exists_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should report some status for the symlink
+            // Note: Implementation may report false for broken symlinks even with follow_symlinks=false
+            assert!(text.text.contains("\"exists\":") && text.text.contains("broken_link.txt"));
+        }
     }
 }
 

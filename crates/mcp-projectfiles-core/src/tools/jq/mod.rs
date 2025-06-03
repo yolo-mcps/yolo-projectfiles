@@ -6,6 +6,7 @@ mod conditionals;
 
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -109,6 +110,9 @@ pub struct JsonQueryTool {
     /// Create backup before writing (default: false)
     #[serde(default)]
     pub backup: bool,
+    /// Follow symlinks when reading files (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_operation() -> String {
@@ -117,6 +121,10 @@ fn default_operation() -> String {
 
 fn default_output_format() -> String {
     "json".to_string()
+}
+
+fn default_follow_symlinks() -> bool {
+    true
 }
 
 
@@ -208,13 +216,23 @@ impl StatefulTool for JsonQueryTool {
     async fn call_with_context(self, context: &ToolContext) -> Result<CallToolResult, CallToolError> {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
-        let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
-        let file_path = project_root.join(&relative_path);
         
-        // Check if file exists
-        if !file_path.exists() {
-            return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("File not found: {}", relative_path.display()))));
-        }
+        // For read operations, use symlink-aware path resolution
+        let file_path = if self.operation == "read" {
+            resolve_path_for_read(&self.file_path, &project_root, self.follow_symlinks, "jq")
+                .map_err(|e| CallToolError::from(e))?
+        } else {
+            // For write operations, use the old validation to restrict to project directory
+            let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+            let file_path = project_root.join(&relative_path);
+            
+            // Check if file exists for write operations
+            if !file_path.exists() {
+                return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("File not found: {}", relative_path.display()))));
+            }
+            
+            file_path
+        };
         
         // Read JSON file
         let mut data = self.read_json_file(&file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;

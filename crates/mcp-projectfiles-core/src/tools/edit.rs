@@ -461,6 +461,7 @@ mod tests {
             case_insensitive: false,
             encoding: "utf-8".to_string(),
             linenumbers: true,
+            follow_symlinks: true,
         };
         let _ = read_tool.call_with_context(context).await.unwrap();
     }

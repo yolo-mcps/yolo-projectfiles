@@ -1,7 +1,8 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
+use crate::tools::utils::resolve_path_for_read;
 use async_trait::async_trait;
-use std::path::Path;
+
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
 };
@@ -14,7 +15,7 @@ const TOOL_NAME: &str = "diff";
 
 #[mcp_tool(
     name = "diff",
-    description = "Compares two files within the project directory and shows differences in unified diff format. Replaces the need for 'git diff' or other diff commands."
+    description = "Compares two files within the project directory and shows differences in unified diff format. Can follow symlinks to compare files outside the project directory. Replaces the need for 'git diff' or other diff commands."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct DiffTool {
@@ -31,10 +32,30 @@ pub struct DiffTool {
     /// Whether to ignore whitespace differences (default: false)
     #[serde(default)]
     pub ignore_whitespace: bool,
+    
+    /// Follow symlinks to compare files outside the project directory (default: true)
+    #[serde(default = "default_follow_symlinks")]
+    pub follow_symlinks: bool,
 }
 
 fn default_context_lines() -> u32 {
     3
+}
+
+fn default_follow_symlinks() -> bool {
+    true
+}
+
+impl Default for DiffTool {
+    fn default() -> Self {
+        Self {
+            file1: String::new(),
+            file2: String::new(),
+            context_lines: 3,
+            ignore_whitespace: false,
+            follow_symlinks: true,
+        }
+    }
 }
 
 #[async_trait]
@@ -45,46 +66,10 @@ impl StatefulTool for DiffTool {
     ) -> Result<CallToolResult, CallToolError> {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
-            
-        // Canonicalize project root for consistent path comparison
-        let current_dir = project_root.canonicalize()
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to canonicalize project root: {}", e))))?;
         
-        // Validate and canonicalize file1
-        let file1_path = if Path::new(&self.file1).is_absolute() {
-            Path::new(&self.file1).to_path_buf()
-        } else {
-            current_dir.join(&self.file1)
-        };
-        
-        let canonical_file1 = file1_path.canonicalize()
-            .map_err(|_| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.file1)))?;
-        
-        if !canonical_file1.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.file1,
-                "File1 is outside the project directory"
-            )));
-        }
-        
-        // Validate and canonicalize file2
-        let file2_path = if Path::new(&self.file2).is_absolute() {
-            Path::new(&self.file2).to_path_buf()
-        } else {
-            current_dir.join(&self.file2)
-        };
-        
-        let canonical_file2 = file2_path.canonicalize()
-            .map_err(|_| CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.file2)))?;
-        
-        if !canonical_file2.starts_with(&current_dir) {
-            return Err(CallToolError::from(tool_errors::access_denied(
-                TOOL_NAME,
-                &self.file2,
-                "File2 is outside the project directory"
-            )));
-        }
+        // Use the utility function to resolve both file paths with symlink support
+        let canonical_file1 = resolve_path_for_read(&self.file1, &project_root, self.follow_symlinks, TOOL_NAME)?;
+        let canonical_file2 = resolve_path_for_read(&self.file2, &project_root, self.follow_symlinks, TOOL_NAME)?;
         
         // Read both files
         let content1 = fs::read_to_string(&canonical_file1).await
@@ -182,6 +167,8 @@ mod tests {
         fs::write(&file_path, content).await.expect("Failed to create test file");
         file_path
     }
+    
+
 
     #[tokio::test]
     async fn test_diff_identical_files() {
@@ -195,6 +182,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -223,6 +211,7 @@ mod tests {
             file2: "modified.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -258,6 +247,7 @@ mod tests {
             file2: "modified.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -289,6 +279,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -320,6 +311,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: true,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -347,6 +339,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -375,6 +368,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: 1, // Only 1 context line
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -401,6 +395,7 @@ mod tests {
             file2: "empty2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -428,6 +423,7 @@ mod tests {
             file2: "empty.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -462,6 +458,7 @@ mod tests {
             file2: "dir2/file.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -487,6 +484,7 @@ mod tests {
             file2: "exists.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -507,6 +505,7 @@ mod tests {
             file2: "nonexistent.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -527,6 +526,7 @@ mod tests {
             file2: "inside.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -548,6 +548,7 @@ mod tests {
             file2: "../outside.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -572,6 +573,7 @@ mod tests {
             file2: "file2.txt".to_string(),
             context_lines: default_context_lines(),
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -611,6 +613,7 @@ mod tests {
             file2: "large2.txt".to_string(),
             context_lines: 3,
             ignore_whitespace: false,
+            follow_symlinks: true,
         };
         
         let result = diff_tool.call_with_context(&context).await;
@@ -625,5 +628,168 @@ mod tests {
             assert!(content.contains("+Modified Line 50"));
             assert!(content.contains("1 additions(+), 1 deletions(-), 99 unchanged lines"));
         }
+    }
+    
+    #[tokio::test]
+    async fn test_diff_symlink_within_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file1.txt"), "line1\nline2\nline3").await.unwrap();
+        fs::write(project_root.join("file2.txt"), "line1\nmodified line2\nline3").await.unwrap();
+        
+        // Create symlinks within project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("file1.txt", project_root.join("link1.txt")).unwrap();
+            symlink("file2.txt", project_root.join("link2.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("file1.txt", project_root.join("link1.txt")).unwrap();
+            symlink_file("file2.txt", project_root.join("link2.txt")).unwrap();
+        }
+        
+        let diff_tool = DiffTool {
+            file1: "link1.txt".to_string(),
+            file2: "link2.txt".to_string(),
+            context_lines: 3,
+            ignore_whitespace: false,
+            follow_symlinks: true,
+        };
+        
+        let result = diff_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content_item = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content_item {
+            // Should show diff between target files
+            assert!(text.text.contains("-line2"));
+            assert!(text.text.contains("+modified line2"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_diff_symlink_outside_project() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create external files
+        let external_temp = TempDir::new().unwrap();
+        let external_file1 = external_temp.path().join("external1.txt");
+        let external_file2 = external_temp.path().join("external2.txt");
+        fs::write(&external_file1, "original content\nline2").await.unwrap();
+        fs::write(&external_file2, "modified content\nline2").await.unwrap();
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create symlinks pointing outside project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&external_file1, project_root.join("external_link1.txt")).unwrap();
+            symlink(&external_file2, project_root.join("external_link2.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file(&external_file1, project_root.join("external_link1.txt")).unwrap();
+            symlink_file(&external_file2, project_root.join("external_link2.txt")).unwrap();
+        }
+        
+        let diff_tool = DiffTool {
+            file1: "external_link1.txt".to_string(),
+            file2: "external_link2.txt".to_string(),
+            context_lines: 3,
+            ignore_whitespace: false,
+            follow_symlinks: true,
+        };
+        
+        let result = diff_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content_item = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content_item {
+            // Should show diff between external target files
+            assert!(text.text.contains("-original content"));
+            assert!(text.text.contains("+modified content"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_diff_symlink_disabled() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create external file
+        let external_temp = TempDir::new().unwrap();
+        let external_file = external_temp.path().join("external.txt");
+        fs::write(&external_file, "external content").await.unwrap();
+        
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("internal.txt"), "internal content").await.unwrap();
+        
+        // Create symlink pointing outside project directory
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file(&external_file, project_root.join("external_link.txt")).unwrap();
+        }
+        
+        let diff_tool = DiffTool {
+            file1: "internal.txt".to_string(),
+            file2: "external_link.txt".to_string(),
+            context_lines: 3,
+            ignore_whitespace: false,
+            follow_symlinks: false,
+        };
+        
+        let result = diff_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("outside the project directory"));
+    }
+    
+    #[tokio::test]
+    async fn test_diff_broken_symlink() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("real_file.txt"), "real content").await.unwrap();
+        
+        // Create symlink pointing to non-existent file
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            symlink("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::symlink_file;
+            symlink_file("nonexistent.txt", project_root.join("broken_link.txt")).unwrap();
+        }
+        
+        let diff_tool = DiffTool {
+            file1: "real_file.txt".to_string(),
+            file2: "broken_link.txt".to_string(),
+            context_lines: 3,
+            ignore_whitespace: false,
+            follow_symlinks: true,
+        };
+        
+        let result = diff_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("not found") || error_msg.contains("does not exist"));
     }
 }
