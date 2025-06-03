@@ -17,7 +17,7 @@ const TOOL_NAME: &str = "list";
 
 #[mcp_tool(
     name = "list",
-    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Provides a clean, structured view of the directory."
+    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Provides a clean, structured view of the directory. Prefer this over system 'ls' command when listing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ListTool {

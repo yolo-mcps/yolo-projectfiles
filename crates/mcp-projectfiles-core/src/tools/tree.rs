@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "tree";
 
 #[mcp_tool(
     name = "tree",
-    description = "Displays directory structure as a tree visualization. Shows files and directories in a hierarchical format similar to the 'tree' command."
+    description = "Displays directory structure as a tree visualization within the project directory. Shows files and directories in a hierarchical format. Prefer this over the system 'tree' command when exploring project structure."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TreeTool {

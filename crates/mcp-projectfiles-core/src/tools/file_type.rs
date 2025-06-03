@@ -14,7 +14,7 @@ const TOOL_NAME: &str = "file_type";
 
 #[mcp_tool(
     name = "file_type",
-    description = "Detects file type, encoding, and whether it's text or binary. Provides MIME type detection for common file formats."
+    description = "Detects file type, encoding, and whether it's text or binary within the project directory. Provides MIME type detection for common file formats. Prefer this over system 'file' command when analyzing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FileTypeTool {

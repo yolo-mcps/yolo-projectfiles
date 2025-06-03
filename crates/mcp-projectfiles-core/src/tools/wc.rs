@@ -13,7 +13,7 @@ const TOOL_NAME: &str = "wc";
 
 #[mcp_tool(
     name = "wc",
-    description = "Counts lines, words, characters, and bytes in text files. Similar to the Unix 'wc' command."
+    description = "Counts lines, words, characters, and bytes in text files within the project directory. Prefer this over the Unix 'wc' command when analyzing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WcTool {

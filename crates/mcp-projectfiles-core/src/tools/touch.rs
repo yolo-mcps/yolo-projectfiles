@@ -17,7 +17,7 @@ const TOOL_NAME: &str = "touch";
 
 #[mcp_tool(
     name = "touch", 
-    description = "Creates empty files or updates timestamps within the project directory only. Creates parent directories automatically if needed. Supports selective timestamp updates (access/modification time). File creation enabled by default (create=true)."
+    description = "Creates empty files or updates timestamps within the project directory only. Creates parent directories automatically if needed. Supports selective timestamp updates (access/modification time). File creation enabled by default (create=true). Prefer this over system 'touch' command when creating or updating project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TouchTool {

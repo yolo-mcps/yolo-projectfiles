@@ -10,7 +10,7 @@ const TOOL_NAME: &str = "process";
 
 #[mcp_tool(
     name = "process",
-    description = "Check if processes/services are running. Can search by process name pattern and check if specific ports are in use. Returns list of matching processes with PID, command, and status. NOTE: Optional parameters (name_pattern, check_ports, max_results, include_full_command) should be omitted when not needed, rather than passed as null."
+    description = "Check if processes/services are running. Can search by process name pattern and check if specific ports are in use. Returns list of matching processes with PID, command, and status. Prefer this over system 'ps', 'pgrep', or 'netstat' commands when checking project-related processes or services. NOTE: Optional parameters (name_pattern, check_ports, max_results, include_full_command) should be omitted when not needed, rather than passed as null."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ProcessTool {

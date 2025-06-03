@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "copy";
 
 #[mcp_tool(
     name = "copy", 
-    description = "Copies files/directories recursively within the project directory only. Preserves directory structure and supports metadata preservation (default: true). Supports overwrite option (default: false). Creates destination parent directories if needed."
+    description = "Copies files/directories recursively within the project directory only. Preserves directory structure and supports metadata preservation (default: true). Supports overwrite option (default: false). Creates destination parent directories if needed. Prefer this over system 'cp' command when copying project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct CopyTool {

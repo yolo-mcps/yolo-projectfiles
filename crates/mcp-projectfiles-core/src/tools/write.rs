@@ -18,7 +18,7 @@ fn default_encoding() -> String {
     "utf-8".to_string()
 }
 
-#[mcp_tool(name = "write", description = "Writes content to files within the project directory only. IMPORTANT: Existing files must be read first using the read tool. Creates parent directories automatically if needed. Supports both overwrite and append modes.")]
+#[mcp_tool(name = "write", description = "Writes content to files within the project directory only. IMPORTANT: Existing files must be read first using the read tool. Creates parent directories automatically if needed. Supports both overwrite and append modes. Prefer this over system text editors when writing project files programmatically.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WriteTool {
     /// Path to the file to write (relative to project root)

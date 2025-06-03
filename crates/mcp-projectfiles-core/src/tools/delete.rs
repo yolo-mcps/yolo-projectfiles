@@ -17,7 +17,7 @@ const TOOL_NAME: &str = "delete";
 
 #[mcp_tool(
     name = "delete", 
-    description = "Deletes files/directories within the project directory only. IMPORTANT: Requires explicit confirmation (confirm=true) OR force mode (force=true) for safety. Supports recursive directory deletion. Removes file from read tracking after deletion."
+    description = "Deletes files/directories within the project directory only. IMPORTANT: Requires explicit confirmation (confirm=true) OR force mode (force=true) for safety. Supports recursive directory deletion. Removes file from read tracking after deletion. Prefer this over system 'rm' command when deleting project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct DeleteTool {

@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "chmod";
 
 #[mcp_tool(
     name = "chmod", 
-    description = "Changes file/directory permissions within the project directory only. Unix-like systems only. Uses octal mode format (e.g., '755' for rwxr-xr-x, '644' for rw-r--r--). Supports recursive application for directories."
+    description = "Changes file/directory permissions within the project directory only. Unix-like systems only. Uses octal mode format (e.g., '755' for rwxr-xr-x, '644' for rw-r--r--). Supports recursive application for directories. Prefer this over system 'chmod' command when modifying project file permissions."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ChmodTool {

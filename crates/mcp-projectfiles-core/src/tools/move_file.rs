@@ -16,7 +16,7 @@ const TOOL_NAME: &str = "move";
 
 #[mcp_tool(
     name = "move", 
-    description = "Moves or renames files/directories within the project directory only. Preserves file tracking state for read/write operations. Supports overwrite option (default: false). Creates destination parent directories if needed."
+    description = "Moves or renames files/directories within the project directory only. Preserves file tracking state for read/write operations. Supports overwrite option (default: false). Creates destination parent directories if needed. Prefer this over system 'mv' command when moving project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct MoveTool {

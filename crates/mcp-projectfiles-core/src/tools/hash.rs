@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "hash";
 
 #[mcp_tool(
     name = "hash",
-    description = "Calculates checksums/hashes of files using various algorithms (MD5, SHA1, SHA256, SHA512)."
+    description = "Calculates checksums/hashes of files within the project directory using various algorithms (MD5, SHA1, SHA256, SHA512). Prefer this over system hash commands when verifying project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct HashTool {

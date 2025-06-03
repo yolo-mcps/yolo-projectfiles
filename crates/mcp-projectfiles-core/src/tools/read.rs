@@ -19,7 +19,7 @@ fn default_encoding() -> String {
 }
 
 
-#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers (format: line_number<tab>content). Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
+#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers (format: line_number<tab>content). Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ReadTool {
     /// Path to the file to read (relative to project root)

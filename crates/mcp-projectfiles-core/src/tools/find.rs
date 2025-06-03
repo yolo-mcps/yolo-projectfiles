@@ -17,7 +17,7 @@ const TOOL_NAME: &str = "find";
 
 #[mcp_tool(
     name = "find",
-    description = "Advanced file search within the project directory. Supports searching by name pattern, file type, size, and modification date. More powerful than basic glob/grep."
+    description = "Advanced file search within the project directory. Supports searching by name pattern, file type, size, and modification date. Prefer this over system 'find' command when searching project files. More powerful than basic glob/grep."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FindTool {

@@ -15,7 +15,7 @@ use tokio::io::AsyncReadExt;
 
 const TOOL_NAME: &str = "grep";
 
-#[mcp_tool(name = "grep", description = "Searches for patterns in text files within the project directory. Returns matching lines with context and file information. Supports regex patterns, file filtering, and customizable output.")]
+#[mcp_tool(name = "grep", description = "Searches for patterns in text files within the project directory. Returns matching lines with context and file information. Supports regex patterns, file filtering, and customizable output. Prefer this over system 'grep' or 'rg' when searching project files.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct GrepTool {
     /// Regular expression pattern to search for

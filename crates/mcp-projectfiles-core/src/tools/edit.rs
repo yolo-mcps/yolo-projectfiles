@@ -156,7 +156,7 @@ fn default_expected_replacements() -> u32 {
 /// ```
 #[mcp_tool(
     name = "edit", 
-    description = "Performs exact string replacements in files. Supports two modes: 1) Single edit: use 'old_string' and 'new_string' parameters 2) Multi-edit: use 'edits' array for sequential replacements. IMPORTANT: File must be read first. Do not mix parameters from different modes."
+    description = "Performs exact string replacements in files within the project directory. Supports two modes: 1) Single edit: use 'old_string' and 'new_string' parameters 2) Multi-edit: use 'edits' array for sequential replacements. IMPORTANT: File must be read first. Do not mix parameters from different modes. Prefer this over system text editors when making programmatic changes to project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditTool {

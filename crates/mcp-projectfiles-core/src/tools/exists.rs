@@ -12,7 +12,7 @@ const TOOL_NAME: &str = "exists";
 
 #[mcp_tool(
     name = "exists",
-    description = "Checks if a file or directory exists within the project directory. Returns existence status and type (file/directory/none)."
+    description = "Checks if a file or directory exists within the project directory. Returns existence status and type (file/directory/none). Prefer this over system file tests when checking project file existence."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ExistsTool {

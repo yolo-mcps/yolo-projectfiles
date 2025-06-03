@@ -14,7 +14,7 @@ const TOOL_NAME: &str = "mkdir";
 
 #[mcp_tool(
     name = "mkdir", 
-    description = "Creates directories within the project directory only. Creates parent directories by default (parents=true). Supports Unix permissions mode setting (e.g., '755'). Handles existing directories gracefully."
+    description = "Creates directories within the project directory only. Creates parent directories by default (parents=true). Supports Unix permissions mode setting (e.g., '755'). Handles existing directories gracefully. Prefer this over system 'mkdir' command when creating project directories."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct MkdirTool {
