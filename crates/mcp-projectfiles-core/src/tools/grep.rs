@@ -33,8 +33,8 @@ pub struct GrepTool {
     #[serde(default = "default_case_insensitive")]
     pub case_insensitive: bool,
     /// Show line numbers
-    #[serde(default = "default_show_line_numbers")]
-    pub show_line_numbers: bool,
+    #[serde(default = "default_linenumbers")]
+    pub linenumbers: bool,
     /// Lines of context before each match
     #[serde(default)]
     pub context_before: Option<u32>,
@@ -54,7 +54,7 @@ fn default_case_insensitive() -> bool {
     false
 }
 
-fn default_show_line_numbers() -> bool {
+fn default_linenumbers() -> bool {
     true
 }
 
@@ -170,7 +170,7 @@ impl StatefulTool for GrepTool {
                 // Output context before
                 for (ctx_idx, ctx_line) in m.context_before.iter().enumerate() {
                     let ctx_line_number = m.line_number - m.context_before.len() + ctx_idx;
-                    if self.show_line_numbers {
+                    if self.linenumbers {
                         output.push_str(&format!("{}:{}-\t{}\n", relative_path.display(), ctx_line_number, ctx_line));
                     } else {
                         output.push_str(&format!("{}: {}\n", relative_path.display(), ctx_line));
@@ -178,7 +178,7 @@ impl StatefulTool for GrepTool {
                 }
                 
                 // Output the match line
-                if self.show_line_numbers {
+                if self.linenumbers {
                     output.push_str(&format!("{}:{}:\t{}", relative_path.display(), m.line_number, m.line_content));
                 } else {
                     output.push_str(&format!("{}: {}", relative_path.display(), m.line_content));
@@ -187,7 +187,7 @@ impl StatefulTool for GrepTool {
                 // Output context after
                 for (ctx_idx, ctx_line) in m.context_after.iter().enumerate() {
                     let ctx_line_number = m.line_number + 1 + ctx_idx;
-                    if self.show_line_numbers {
+                    if self.linenumbers {
                         output.push_str(&format!("\n{}:{}-\t{}", relative_path.display(), ctx_line_number, ctx_line));
                     } else {
                         output.push_str(&format!("\n{}: {}", relative_path.display(), ctx_line));

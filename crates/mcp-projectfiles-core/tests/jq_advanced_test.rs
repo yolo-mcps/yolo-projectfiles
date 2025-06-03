@@ -1348,3 +1348,811 @@ async fn test_try_catch() {
     let parsed: serde_json::Value = serde_json::from_str(extract_text_content(&result)).unwrap();
     assert_eq!(parsed, json!(null));
 }
+
+#[tokio::test]
+async fn test_array_add_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test summing numbers
+    let content = json!([1, 2, 3, 4, 5]);
+    create_test_file(&temp_dir, "numbers.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "add".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(15.0));
+    
+    // Test concatenating strings
+    let content = json!(["hello", " ", "world"]);
+    create_test_file(&temp_dir, "strings.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "strings.json".to_string(),
+        query: "add".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!("hello world"));
+}
+
+#[tokio::test]
+async fn test_array_min_max_functions() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([5, 2, 8, 1, 9, 3]);
+    create_test_file(&temp_dir, "numbers.json", &content.to_string()).await;
+    
+    // Test min
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "min".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(1.0));
+    
+    // Test max
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "max".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(9.0));
+}
+
+#[tokio::test]
+async fn test_array_unique_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([1, 2, 2, 3, 1, 4, 3, 5]);
+    create_test_file(&temp_dir, "duplicates.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "duplicates.json".to_string(),
+        query: "unique".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    
+    // unique returns sorted unique values
+    assert_eq!(parsed, json!([1, 2, 3, 4, 5]));
+}
+
+#[tokio::test]
+async fn test_array_reverse_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([1, 2, 3, 4, 5]);
+    create_test_file(&temp_dir, "ordered.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "ordered.json".to_string(),
+        query: "reverse".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([5, 4, 3, 2, 1]));
+}
+
+#[tokio::test]
+async fn test_array_sort_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test sorting numbers
+    let content = json!([5, 2, 8, 1, 9, 3]);
+    create_test_file(&temp_dir, "numbers.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "sort".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([1, 2, 3, 5, 8, 9]));
+    
+    // Test sorting strings
+    let content = json!(["zebra", "apple", "mango", "banana"]);
+    create_test_file(&temp_dir, "strings.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "strings.json".to_string(),
+        query: "sort".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!(["apple", "banana", "mango", "zebra"]));
+}
+
+#[tokio::test]
+async fn test_array_sort_by_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([
+        {"name": "alice", "age": 30},
+        {"name": "bob", "age": 25},
+        {"name": "charlie", "age": 35}
+    ]);
+    create_test_file(&temp_dir, "users.json", &content.to_string()).await;
+    
+    // Sort by age
+    let tool = JsonQueryTool {
+        file_path: "users.json".to_string(),
+        query: "sort_by(.age)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(
+        parsed,
+        json!([
+            {"name": "bob", "age": 25},
+            {"name": "alice", "age": 30},
+            {"name": "charlie", "age": 35}
+        ])
+    );
+    
+    // Sort by name
+    let tool = JsonQueryTool {
+        file_path: "users.json".to_string(),
+        query: "sort_by(.name)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(
+        parsed,
+        json!([
+            {"name": "alice", "age": 30},
+            {"name": "bob", "age": 25},
+            {"name": "charlie", "age": 35}
+        ])
+    );
+}
+
+#[tokio::test]
+async fn test_array_flatten_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test basic flatten
+    let content = json!([[1, 2], [3, 4], 5, [6, [7, 8]]]);
+    create_test_file(&temp_dir, "nested.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "nested.json".to_string(),
+        query: "flatten".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([1, 2, 3, 4, 5, 6, [7, 8]]));
+    
+    // Test flatten with depth
+    let tool = JsonQueryTool {
+        file_path: "nested.json".to_string(),
+        query: "flatten(2)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([1, 2, 3, 4, 5, 6, 7, 8]));
+}
+
+#[tokio::test]
+async fn test_array_group_by_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([
+        {"name": "alice", "team": "red", "score": 10},
+        {"name": "bob", "team": "blue", "score": 15},
+        {"name": "charlie", "team": "red", "score": 20},
+        {"name": "dave", "team": "blue", "score": 5},
+        {"name": "eve", "team": "green", "score": 12}
+    ]);
+    create_test_file(&temp_dir, "players.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "players.json".to_string(),
+        query: "group_by(.team)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    
+    // Should be grouped by team and sorted by key (blue, green, red)
+    assert_eq!(
+        parsed,
+        json!([
+            [
+                {"name": "bob", "team": "blue", "score": 15},
+                {"name": "dave", "team": "blue", "score": 5}
+            ],
+            [
+                {"name": "eve", "team": "green", "score": 12}
+            ],
+            [
+                {"name": "alice", "team": "red", "score": 10},
+                {"name": "charlie", "team": "red", "score": 20}
+            ]
+        ])
+    );
+}
+#[tokio::test]
+async fn test_array_slicing() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    create_test_file(&temp_dir, "numbers.json", &content.to_string()).await;
+    
+    // Test basic slice [2:5]
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "[2:5]".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([2, 3, 4]));
+    
+    // Test slice from start [:3]
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "[:3]".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([0, 1, 2]));
+    
+    // Test slice to end [7:]
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "[7:]".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([7, 8, 9]));
+    
+    // Test slice with path
+    let content = json!({
+        "items": [0, 1, 2, 3, 4, 5]
+    });
+    create_test_file(&temp_dir, "object.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "object.json".to_string(),
+        query: ".items[1:4]".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([1, 2, 3]));
+}
+
+#[tokio::test]
+async fn test_indices_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test indices in array
+    let content = json!([1, 2, 3, 2, 4, 2, 5]);
+    create_test_file(&temp_dir, "numbers.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "numbers.json".to_string(),
+        query: "indices(2)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([1, 3, 5]));
+    
+    // Test indices in string
+    let content = json!("hello world hello");
+    create_test_file(&temp_dir, "string.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "string.json".to_string(),
+        query: r#"indices("hello")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!([0, 12]));
+}
+
+#[tokio::test]
+async fn test_has_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!({
+        "name": "alice",
+        "age": 30,
+        "city": "wonderland"
+    });
+    create_test_file(&temp_dir, "user.json", &content.to_string()).await;
+    
+    // Test has with existing key
+    let tool = JsonQueryTool {
+        file_path: "user.json".to_string(),
+        query: r#"has("name")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!(true));
+    
+    // Test has with non-existing key
+    let tool = JsonQueryTool {
+        file_path: "user.json".to_string(),
+        query: r#"has("email")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!(false));
+}
+
+#[tokio::test]
+async fn test_del_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!({
+        "name": "alice",
+        "age": 30,
+        "city": "wonderland",
+        "hobbies": ["reading", "chess", "tea"]
+    });
+    create_test_file(&temp_dir, "user.json", &content.to_string()).await;
+    
+    // Test del with object key
+    let tool = JsonQueryTool {
+        file_path: "user.json".to_string(),
+        query: "del(.age)".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!({
+        "name": "alice",
+        "city": "wonderland",
+        "hobbies": ["reading", "chess", "tea"]
+    }));
+}
+
+#[tokio::test]
+async fn test_with_entries_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!({
+        "a": 1,
+        "b": 2,
+        "c": 3
+    });
+    create_test_file(&temp_dir, "object.json", &content.to_string()).await;
+    
+    // Test with_entries to double all values
+    let tool = JsonQueryTool {
+        file_path: "object.json".to_string(),
+        query: r#"with_entries(.value = .value * 2)"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    
+    // Check the values are doubled (handle both integer and float representations)
+    if let serde_json::Value::Object(map) = parsed {
+        assert_eq!(map.get("a").and_then(|v| v.as_f64()), Some(2.0));
+        assert_eq!(map.get("b").and_then(|v| v.as_f64()), Some(4.0));
+        assert_eq!(map.get("c").and_then(|v| v.as_f64()), Some(6.0));
+    } else {
+        panic!("Expected object result");
+    }
+}
+
+#[tokio::test]
+async fn test_paths_functions() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!({
+        "user": {
+            "name": "alice",
+            "contact": {
+                "email": "alice@example.com",
+                "phone": "123-456"
+            }
+        },
+        "status": "active"
+    });
+    create_test_file(&temp_dir, "nested.json", &content.to_string()).await;
+    
+    // Test leaf_paths
+    let tool = JsonQueryTool {
+        file_path: "nested.json".to_string(),
+        query: "leaf_paths".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    
+    // Should contain only paths to leaf values
+    let expected_paths = vec![
+        json!(["user", "name"]),
+        json!(["user", "contact", "email"]),
+        json!(["user", "contact", "phone"]),
+        json!(["status"])
+    ];
+    
+    if let serde_json::Value::Array(paths) = parsed {
+        assert_eq!(paths.len(), 4);
+        for path in expected_paths {
+            assert!(paths.contains(&path));
+        }
+    } else {
+        panic!("Expected array of paths");
+    }
+}
+
+#[tokio::test]
+async fn test_string_test_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!("hello@example.com");
+    create_test_file(&temp_dir, "email.json", &content.to_string()).await;
+    
+    // Test regex match
+    let tool = JsonQueryTool {
+        file_path: "email.json".to_string(),
+        query: r#"test("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!(true));
+    
+    // Test non-match
+    let content = json!("not an email");
+    create_test_file(&temp_dir, "text.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "text.json".to_string(),
+        query: r#"test("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!(false));
+}
+
+#[tokio::test]
+async fn test_string_match_function() {
+    let (context, temp_dir) = setup_test_context().await;
+    let content = json!("The year is 2024");
+    create_test_file(&temp_dir, "text.json", &content.to_string()).await;
+    
+    // Test match with captures
+    let tool = JsonQueryTool {
+        file_path: "text.json".to_string(),
+        query: r#"match("(\d{4})")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    
+    // Check the match structure
+    assert_eq!(parsed["string"], "2024");
+    assert_eq!(parsed["offset"], 12);
+    assert_eq!(parsed["length"], 4);
+}
+
+#[tokio::test]
+async fn test_string_trim_functions() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test ltrimstr
+    let content = json!("prefixHelloWorld");
+    create_test_file(&temp_dir, "text.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "text.json".to_string(),
+        query: r#"ltrimstr("prefix")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!("HelloWorld"));
+    
+    // Test rtrimstr
+    let content = json!("HelloWorldsuffix");
+    create_test_file(&temp_dir, "text2.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "text2.json".to_string(),
+        query: r#"rtrimstr("suffix")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed, json!("HelloWorld"));
+}
+
+#[tokio::test]
+async fn test_math_functions() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test floor
+    let content = json!(3.7);
+    create_test_file(&temp_dir, "number.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "number.json".to_string(),
+        query: "floor".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(3.0));
+    
+    // Test ceil
+    let content = json!(3.2);
+    create_test_file(&temp_dir, "number2.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "number2.json".to_string(),
+        query: "ceil".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(4.0));
+    
+    // Test round
+    let content = json!(3.5);
+    create_test_file(&temp_dir, "number3.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "number3.json".to_string(),
+        query: "round".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(4.0));
+    
+    // Test abs
+    let content = json!(-5.3);
+    create_test_file(&temp_dir, "number4.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "number4.json".to_string(),
+        query: "abs".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert!((parsed.as_f64().unwrap() - 5.3).abs() < 0.0001);
+    
+    // Test modulo operator
+    let content = json!({"a": 17, "b": 5});
+    create_test_file(&temp_dir, "modulo.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "modulo.json".to_string(),
+        query: ".a % .b".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    assert_eq!(parsed.as_f64(), Some(2.0));
+}
+
+#[tokio::test]
+async fn test_debugging_functions() {
+    let (context, temp_dir) = setup_test_context().await;
+    
+    // Test empty function
+    let content = json!([1, 2, 3]);
+    create_test_file(&temp_dir, "array.json", &content.to_string()).await;
+    
+    let tool = JsonQueryTool {
+        file_path: "array.json".to_string(),
+        query: "empty".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let content = extract_text_content(&result);
+    let parsed: serde_json::Value = serde_json::from_str(content).unwrap();
+    // empty returns an empty array as a marker
+    assert_eq!(parsed, json!([]));
+    
+    // Test error function
+    let tool = JsonQueryTool {
+        file_path: "array.json".to_string(),
+        query: r#"error("This is an error message")"#.to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    if let Err(e) = result {
+        let error_msg = e.to_string();
+        assert!(error_msg.contains("This is an error message"));
+    }
+}

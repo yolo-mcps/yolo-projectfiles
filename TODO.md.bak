@@ -1,221 +1,91 @@
 # TODO
 
-## Structured Data Tools - COMPLETED ✅
+## jq Tool Enhancement - Features for LLM/MCP Usage
 
-### Implementation Notes - Fixed Issues
-- Fixed path resolution issues in all three tools (jq, yq, tomlq)
-- Added proper project root resolution using ToolContext
-- Fixed file existence checks before canonicalization
-- Added read file tracking for write operations
-- Fixed output format to return raw content for read operations
-- Fixed TOML scalar serialization to return raw values
+### Phase 1: Essential Features (High Priority)
 
-### JSON Tool (`jq`) - ✅ IMPLEMENTED
-- [x] Add `jq-rs` dependency to Cargo.toml
-- [x] Implement `JsonQueryTool` struct in `tools/jq.rs`
-- [x] Support read operations with jq syntax
-- [x] Support write operations with in-place modification
-- [x] Add backup support for write operations
-- [x] Implement output formatting (json, raw, compact)
-- [x] Add comprehensive error handling with thiserror
-- [x] Write unit and integration tests
-- [x] Register tool in tools.rs
+#### 1. **Conditional Logic & Error Handling**
+- [ ] `if-then-else` conditionals - Essential for conditional transformations
+- [ ] `and`/`or`/`not` boolean operators - Required for complex filtering
+- [ ] `//` alternative operator (null coalescing) - Handle missing fields gracefully
+- [ ] `?` optional operator (`.field?`) - Prevent errors on missing paths
+- [ ] `try-catch` - Graceful error handling for robust queries
 
-### YAML Tool (`yq`) - ✅ IMPLEMENTED
-- [x] Add `serde_yaml` dependency
-- [x] Implement `YamlQueryTool` struct in `tools/yq.rs`
-- [x] Create custom YAML query syntax (jq-style)
-- [x] Support YAML-specific features (comments, multi-doc)
-- [x] Add write operations with backup support
-- [x] Support output formats (yaml, json, raw)
-- [x] Add error handling and tests
-- [x] Register tool in tools.rs
+#### 2. **Array Operations**
+- [ ] `add` - Sum array elements (common for aggregations)
+- [ ] `unique` - Remove duplicates from results
+- [ ] `sort`/`sort_by` - Order results for consistent output
+- [ ] Array slicing `.[1:3]`, `.[-2:]` - Extract array portions
+- [ ] `flatten` - Simplify nested array structures
+- [ ] `reverse` - Reverse array order
+- [ ] `first`/`last` - Quick array element access
 
-### TOML Tool (`tomlq`) - ✅ IMPLEMENTED
-- [x] Add `toml` dependency
-- [x] Implement `TomlQueryTool` struct in `tools/tomlq.rs`
-- [x] Create custom TOML query syntax (dot notation)
-- [x] Support table and array operations
-- [x] Add write operations with backup support
-- [x] Support output formats (toml, json, raw)
-- [x] Add error handling and tests
-- [x] Register tool in tools.rs
+#### 3. **Object & Key Operations**
+- [ ] `has` - Check if key exists before accessing
+- [ ] `del` - Remove fields from objects
+- [ ] `with_entries` - Transform object key-value pairs
+- [ ] Assignment operators: `+=`, `|=` - Modify values in place
 
-### Dependencies to Add
-```toml
-jq-rs = "0.4"           # JSON querying (actual jq implementation)
-serde_json = "1.0"      # JSON parsing/serialization
-serde_yaml = "0.9"      # YAML parsing/serialization  
-toml = "0.8"            # TOML parsing/serialization
-```
+#### 4. **Data Validation & Type Checking**
+- [ ] `empty` - Produce no output (useful for filtering)
+- [ ] `error` - Raise errors with messages
+- [ ] Type predicates: `isnumber`, `isstring`, `isarray`, `isobject`, `isboolean`
+- [ ] `paths`/`leaf_paths` - Enumerate all paths in structure
 
-### Implementation Guidelines
-- Follow existing tool patterns for consistency
-- Maintain project directory restrictions
-- Use thiserror for error handling with "Error: projectfiles:toolname - message" format
-- Provide comprehensive documentation and examples
-- Write unit tests for each tool
-- Support atomic writes to prevent corruption
-- Add backup file creation for write operations
+### Phase 2: Text Processing & Formatting (Medium Priority)
 
-### Testing Plan
-- Unit tests for query parsing and execution
-- Integration tests with sample files
-- Error condition testing
-- Performance testing with large files
-- Cross-format conversion testing
+#### 5. **Advanced String Operations**
+- [ ] `test`/`match` - Regex pattern matching
+- [ ] `sub`/`gsub` - Find and replace with regex
+- [ ] String interpolation `"Value: \(.field)"` - Build formatted strings
+- [ ] `ltrimstr`/`rtrimstr` - Trim specific prefixes/suffixes
 
-## Testing Results & Improvements Status ✅ ALL COMPLETED
+#### 6. **Output Formatting**
+- [ ] `@base64`/`@base64d` - Encode/decode base64
+- [ ] `@csv`/`@tsv` - Export to CSV/TSV format
+- [ ] `@uri` - URL encoding
+- [ ] `format` - Printf-style formatting
 
-### Successfully Tested Features ✅
-- **Basic read operations**: All three tools (jq, yq, tomlq) successfully handle simple path queries like `.name`, `.config.database`
-- **Write operations**: All tools support in-place modifications with backup creation
-- **Output formats**: Support for JSON, YAML, TOML, raw, and compact formats
-- **Error handling**: Proper error messages for invalid syntax and missing files
-- **Nested object access**: Works for simple nested paths like `.config.database.host`
-- **Array access**: Works for simple array indexing like `.users[0]`
-- **Complex path resolution**: All tools now correctly handle complex paths like `.users[0].roles[1]`
-- **String assignments**: Fixed double-quoting issues for all tools
-- **Context dependency injection**: All tools properly use ToolContext for file path resolution
-- **Integration tests**: Added comprehensive test suite with 227 passing tests
+### Phase 3: Advanced Features (Lower Priority)
 
-### 🎯 Structured Data Tool Improvements - FULLY COMPLETED ✅
+#### 7. **Aggregation & Transformation**
+- [ ] `group_by` - Group elements by criteria
+- [ ] `min`/`max`/`min_by`/`max_by` - Find extremes
+- [ ] `reduce` - Fold/accumulate operations
+- [ ] Variable binding `. as $x | ...` - Reuse values in complex queries
 
-#### ✅ FIXED: Complex Array/Object Path Resolution
-- **Problem**: Queries like `.users[0].roles[1]` and `.users[0].profile.name` returned parent objects instead of specific values
-- **Solution**: 
-  - Rewrote `simple_path_query()` method with proper path parsing
-  - Added `parse_complex_path()` method that handles mixed array/object access patterns
-  - Now supports complex paths like `.users[0].roles[1]`, `.config.database.credentials.username`
-- **Status**: Fully implemented and tested across all three tools (jq, yq, tomlq)
+#### 8. **Utility Functions**
+- [ ] `range` - Generate number sequences
+- [ ] `to_entries`/`from_entries` enhancements - Better object manipulation
+- [ ] `indices`/`index` - Find positions of elements
+- [ ] `any`/`all` - Boolean aggregations over arrays
 
-#### ✅ FIXED: String Quoting Issues
-- **Problem**: Writing string values resulted in double-quoting (e.g., `"\"test\""`)
-- **Solution**: 
-  - Completely rewrote `parse_assignment()` method to properly handle different value types
-  - Unquoted strings are treated as string literals
-  - Already quoted strings are parsed as JSON
-  - Proper handling of booleans, numbers, null values, arrays, and objects
-- **Status**: Fully implemented and tested across all three tools
+### Implementation Notes
 
-#### ✅ FIXED: Improved Error Messages
-- **Problem**: Unhelpful error messages that didn't show supported syntax examples
-- **Solution**: 
-  - Enhanced error messages with specific examples of supported patterns
-  - Better context for unsupported operations like pipes
-  - More helpful assignment error messages
-- **Status**: Fully implemented across all three tools
+#### Why These Features Matter for LLM/MCP Usage:
 
-#### ✅ FIXED: Context Dependency Injection
-- **Problem**: YQ and TOMLQ tools weren't properly using ToolContext for file path resolution
-- **Solution**: 
-  - Ensured all tools properly use `context.get_project_root()` for resolving file paths
-  - Fixed file existence checks and canonicalization order
-  - Added proper read file tracking
-- **Status**: Fully implemented and all integration tests passing
+1. **Error Resilience**: Features like `?`, `//`, and `try-catch` prevent queries from failing on missing data, crucial when processing varied JSON structures.
 
-### ✅ COMPLETED Test Results
+2. **Data Extraction**: Array slicing, `has`, and conditional logic enable precise data extraction from complex nested structures.
 
-All planned tests have been successfully implemented and are passing:
+3. **Data Transformation**: `if-then-else`, `with_entries`, and assignment operators allow in-place data modifications without full rewrites.
 
-1. **Complex Path Resolution**: ✅ Working correctly
-   - `.users[0].roles[1]` → correctly returns `"user"`
-   - `.users[0].profile.name` → correctly returns `"Alice"`
-   - Complex nested paths work as expected
+4. **Result Formatting**: String interpolation and format functions help create human-readable outputs or prepare data for other tools.
 
-2. **String Assignment Tests**: ✅ Fixed
-   - `.testfield = hello` → correctly stores as `"hello"`
-   - String assignments no longer have double-quoting issues
+5. **Validation**: Type checking functions enable data validation before processing, preventing downstream errors.
 
-3. **Integration Tests**: ✅ Complete
-   - Added `structured_data_tools_test.rs` with comprehensive test coverage
-   - All 227 tests passing (201 unit + 20 integration + 6 structured data tool tests)
+6. **Aggregation**: `add`, `group_by`, and `reduce` support common data analysis tasks.
 
-### ✅ All Issues Successfully Resolved
+### Testing Strategy
 
-#### TOML-specific Issues ✅ VERIFIED AND FIXED
-- **TOML output formatting**: Scalar values and arrays cannot be serialized as bare TOML
-  - **Root Cause**: TOML format requires document structure (key-value pairs), cannot represent bare scalars or arrays
-  - **Fix Applied**: Modified format_output to handle scalars as literals and wrap arrays in temporary tables
-  - **Status**: COMPLETED - Tests passing, fix verified working correctly
+- Create test files with diverse JSON structures (nested objects, arrays, mixed types)
+- Test error handling with missing fields and type mismatches
+- Verify performance with large datasets
+- Ensure compatibility with existing jq syntax where possible
 
-#### YQ Tool ✅ COMPLETED
-The YQ tool has been updated with all improvements:
-- **Complex path parsing**: ✅ Implemented `parse_complex_path()` method
-- **String assignment fixes**: ✅ Fixed `parse_assignment()` with proper value handling
-- **Array path assignments**: ✅ Implemented `set_complex_path()` for proper array navigation
-- **Context integration**: ✅ Properly uses ToolContext for file resolution
-- **Status**: COMPLETED - All tests passing
+### Success Criteria
 
-#### TOMLQ Tool ✅ COMPLETED
-The TOMLQ tool has been updated with all improvements:
-- **Complex path parsing**: ✅ Implemented `parse_complex_path()` method
-- **String assignment fixes**: ✅ Fixed `parse_assignment()` with proper value handling
-- **Array path assignments**: ✅ Implemented `set_complex_path()` for proper array navigation
-- **Context integration**: ✅ Properly uses ToolContext for file resolution
-- **Status**: COMPLETED - All tests passing
-
-### Next Steps
-1. ✅ **COMPLETED** - All tools tested and working correctly
-   - Complex path resolution working
-   - String assignments fixed
-   - Error messages improved
-   - Integration tests added and passing
-2. ✅ **COMPLETED** - TOML scalar serialization fixed
-3. **Add comprehensive documentation** for all three tools in README
-4. **Consider Phase 2 enhancements** - Iterator/Multiple outputs (.users[])
-
-### Missing jq Features for Full Compatibility
-
-Currently implemented:
-- ✅ Basic path queries (`.field`, `.nested.field`)
-- ✅ Array indexing (`.array[0]`)
-- ✅ Complex paths (`.users[0].roles[1]`)
-- ✅ Simple assignments (`.field = value`)
-- ✅ Output formats (json, raw, compact)
-
-Major jq features NOT implemented:
-1. **Pipe operations**: `.users | map(.name)`, `.[] | select(.age > 18)`
-2. **Array slicing**: `.array[1:3]`, `.array[-2:]`
-3. **Recursive descent**: `.. | .name?`
-4. **Filters**: `select()`, `has()`, `keys()`, `length`, `type`
-5. **Array operations**: `map()`, `reduce()`, `group_by()`, `sort_by()`, `unique`, `flatten`
-6. **Object construction**: `{name: .username, id: .userid}`, `{(.key): .value}`
-7. **Conditionals**: `if-then-else`, `//` (alternative operator)
-8. **String interpolation**: `"Hello \(.name)"`, string formatting
-9. **Mathematical operations**: `.price * 1.1`, `add`, `min`, `max`
-10. **Type conversions**: `tonumber`, `tostring`, `@base64`, `@uri`
-11. **Multiple outputs**: `.users[]` (iterator), `.[].name`
-12. **Optional operator**: `.field?`, `.array[5]?`
-13. **Comments and metadata**: Support for `#` comments in queries
-14. **Variable binding**: `. as $x | ...`
-15. **Functions**: Custom function definitions
-16. **Try-catch**: `try .field catch "default"`
-
-### Implementation Recommendations
-
-#### Phase 1: Apply existing fixes to yq/tomlq (Immediate)
-- Port the complex path parsing from jq.rs
-- Ensure consistency across all three tools
-
-#### Phase 2: Essential jq features (High Value)
-1. **Iterator/Multiple outputs** (`.users[]`): Very commonly used
-2. **Pipe with select** (`.[] | select(.active)`): Critical for filtering
-3. **Optional operator** (`.field?`): Prevents errors on missing fields
-4. **Array slicing** (`.array[1:3]`): Common array operation
-5. **Simple map operations** (`.users | map(.name)`): Transform arrays
-
-#### Phase 3: Advanced features (Lower Priority)
-- Object construction
-- String interpolation
-- Mathematical operations
-- Recursive descent
-- Custom functions
-
-### Future Enhancements
-- Stream processing for large files
-- JSON Schema validation
-- Cross-format conversion (JSON ↔ YAML ↔ TOML)
-- Query template system
-- Performance optimizations for large datasets
-- Integration with jq C library for full compatibility
+- All implemented features should match standard jq behavior
+- Error messages should be clear and actionable
+- Performance should handle files up to 100MB efficiently
+- Documentation should include examples for each feature

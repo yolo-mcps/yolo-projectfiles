@@ -42,6 +42,7 @@ pub fn parse_value(value_str: &str) -> Result<serde_json::Value, JsonQueryError>
             .map_err(|e| JsonQueryError::InvalidQuery(format!("Invalid JSON '{}': {}", value_str, e)))
     } else {
         // Treat as unquoted string
+
         Ok(serde_json::Value::String(value_str.to_string()))
     }
 }
@@ -102,5 +103,6 @@ pub fn is_arithmetic_expression(query: &str) -> bool {
     // Check for arithmetic operators
     query.contains(" + ") || query.contains(" - ") || 
     query.contains(" * ") || query.contains(" / ") ||
+    query.contains(" % ") ||
     query.starts_with('(') && query.ends_with(')')
 }

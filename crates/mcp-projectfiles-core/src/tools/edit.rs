@@ -156,7 +156,7 @@ fn default_expected_replacements() -> u32 {
 /// ```
 #[mcp_tool(
     name = "edit", 
-    description = "Performs exact string replacements in files within the project directory. Supports two modes: 1) Single edit: use 'old_string' and 'new_string' parameters 2) Multi-edit: use 'edits' array for sequential replacements. IMPORTANT: File must be read first. Do not mix parameters from different modes. Prefer this over system text editors when making programmatic changes to project files."
+    description = "Performs exact string replacements in files within the project directory. CRITICAL: The old_string must match EXACTLY including all whitespace, indentation (tabs/spaces), and line endings. When copying from Read tool output, exclude the line number prefix (e.g., '   123\t' part). The match must be unique unless using expected_replacements > 1. Supports two modes: 1) Single edit: use old_string/new_string/expected_replacements parameters 2) Multi-edit: use edits array for sequential replacements. File MUST be read first. Common errors: including line numbers in old_string, wrong whitespace/indentation, non-unique matches. Prefer this over system text editors when making programmatic changes to project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditTool {
@@ -318,6 +318,7 @@ impl StatefulTool for EditTool {
 
         // Apply edits sequentially
         let mut total_replacements = 0;
+        let mut first_edit_line = None;
         for (idx, edit) in edits.iter().enumerate() {
             // Count occurrences
             let occurrence_count = content.matches(&edit.old_string).count();
@@ -334,6 +335,14 @@ impl StatefulTool for EditTool {
                     TOOL_NAME, 
                     &format!("Edit {}: Expected {} replacements but found {} occurrences", idx + 1, edit.expected_replacements, occurrence_count)
                 )));
+            }
+
+            // Track line number for the first edit
+            if first_edit_line.is_none() && !edit.old_string.is_empty() {
+                if let Some(pos) = content.find(&edit.old_string) {
+                    let line_number = content[..pos].matches('\n').count() + 1;
+                    first_edit_line = Some(line_number);
+                }
             }
 
             // Perform replacement
@@ -369,7 +378,7 @@ impl StatefulTool for EditTool {
                 "Edited file {} ({} at line {})",
                 format_path(relative_path),
                 format_count(total_replacements as usize, "change", "changes"),
-                "TBD" // TODO: Add line number tracking
+                first_edit_line.map_or("unknown".to_string(), |line| line.to_string())
             )
         } else {
             format!(
@@ -446,11 +455,12 @@ mod tests {
             path: file_name.to_string(),
             offset: 0,
             limit: 0,
-            skip_binary_check: false,
+            binary_check: true,
             tail: false,
             pattern: None,
-            pattern_case_insensitive: false,
+            case_insensitive: false,
             encoding: "utf-8".to_string(),
+            linenumbers: true,
         };
         let _ = read_tool.call_with_context(context).await.unwrap();
     }

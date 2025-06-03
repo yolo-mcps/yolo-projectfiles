@@ -18,8 +18,16 @@ fn default_encoding() -> String {
     "utf-8".to_string()
 }
 
+fn default_linenumbers() -> bool {
+    true
+}
 
-#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers (format: line_number<tab>content). Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
+fn default_binary_check() -> bool {
+    true
+}
+
+
+#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers by default (format: line_number<tab>content). Use linenumbers:false to get raw content without line numbers, which is useful when reading files for editing. Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ReadTool {
     /// Path to the file to read (relative to project root)
@@ -30,9 +38,9 @@ pub struct ReadTool {
     /// Maximum number of lines to read. Use 0 for all lines (default)
     #[serde(default)]
     pub limit: u32,
-    /// Skip binary file detection if true (default: false)
-    #[serde(default)]
-    pub skip_binary_check: bool,
+    /// Perform binary file detection if true (default: true)
+    #[serde(default = "default_binary_check")]
+    pub binary_check: bool,
     /// Read from the end of the file (tail mode). If true, offset is from end (default: false)
     #[serde(default)]
     pub tail: bool,
@@ -41,11 +49,14 @@ pub struct ReadTool {
     pub pattern: Option<String>,
     /// Whether pattern matching should be case-insensitive (default: false)
     #[serde(default)]
-    pub pattern_case_insensitive: bool,
+    pub case_insensitive: bool,
     /// Text encoding to use when reading the file (default: "utf-8")
     /// Supported: "utf-8", "ascii", "latin1", "utf-16", "utf-16le", "utf-16be"
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    /// Show line numbers in output (default: true)
+    #[serde(default = "default_linenumbers")]
+    pub linenumbers: bool,
 }
 
 #[async_trait]
@@ -94,7 +105,7 @@ impl StatefulTool for ReadTool {
         }
 
         // Binary file detection (unless skipped)
-        if !self.skip_binary_check {
+        if self.binary_check {
             let mut file = tokio::fs::File::open(&canonical_path).await
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to open file: {}", e))))?;
             
@@ -131,7 +142,7 @@ impl StatefulTool for ReadTool {
         // Apply pattern filtering if specified
         let (lines, line_numbers): (Vec<&str>, Vec<usize>) = if let Some(ref pattern) = self.pattern {
             let regex = match RegexBuilder::new(pattern)
-                .case_insensitive(self.pattern_case_insensitive)
+                .case_insensitive(self.case_insensitive)
                 .build()
             {
                 Ok(r) => r,
@@ -199,8 +210,12 @@ impl StatefulTool for ReadTool {
             let mut result = String::with_capacity((end - start) * 80); // Estimate capacity
             
             for (idx, line) in selected_lines.iter().enumerate() {
-                let line_num = selected_line_numbers[idx];
-                result.push_str(&format!("{:>6}\t{}\n", line_num, line));
+                if self.linenumbers {
+                    let line_num = selected_line_numbers[idx];
+                    result.push_str(&format!("{:>6}\t{}\n", line_num, line));
+                } else {
+                    result.push_str(&format!("{}\n", line));
+                }
             }
             
             // Add truncation notice if needed
@@ -294,11 +309,12 @@ mod tests {
             path: path.to_string(),
             offset: 0,
             limit: 0,
-            skip_binary_check: false,
+            binary_check: true,
             tail: false,
             pattern: None,
-            pattern_case_insensitive: false,
+            case_insensitive: false,
             encoding: "utf-8".to_string(),
+            linenumbers: true,
         }
     }
 
@@ -433,7 +449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_skip_binary_check_flag() {
+    async fn test_binary_check_flag() {
         let temp_dir = TempDir::new().unwrap();
         let binary_content = vec![0, 1, 2, 3, 4, 5, 255, 254, 253];
         let file_path = temp_dir.path().join("binary.bin");
@@ -442,10 +458,10 @@ mod tests {
 
         
         let mut tool = create_read_tool("binary.bin");
-        tool.skip_binary_check = true;
+        tool.binary_check = false; // Disable binary check
         let result = test_read_tool_in_dir(&temp_dir, tool).await;
         
-        // Should not fail due to binary detection when skip_binary_check is true
+        // Should not fail due to binary detection when binary_check is false
         assert!(result.is_ok());
     }
 
@@ -596,7 +612,7 @@ mod tests {
         
         let mut tool = create_read_tool("case_test.txt");
         tool.pattern = Some("todo".to_string());
-        tool.pattern_case_insensitive = true;
+        tool.case_insensitive = true;
         let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
         
         let output = match &result.content[0] {
@@ -659,7 +675,7 @@ mod tests {
         
         let mut tool = create_read_tool("utf8.txt");
         tool.encoding = "utf-8".to_string();
-        tool.skip_binary_check = true; // Skip binary check for this test
+        tool.binary_check = false; // Skip binary check for this test
         let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
         
         let output = match &result.content[0] {
@@ -669,5 +685,94 @@ mod tests {
         
         assert!(output.contains("àáâãäå"));
         assert!(output.contains("ñúü"));
+    }
+
+    // Line numbers tests
+    #[tokio::test]
+    async fn test_read_with_line_numbers() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "First line\nSecond line\nThird line";
+        let _file_path = create_test_file(&temp_dir, "test.txt", content).await;
+        
+        let mut tool = create_read_tool("test.txt");
+        tool.linenumbers = true; // Explicitly set to true (though it's the default)
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        // Should have line numbers
+        assert!(output.contains("     1\tFirst line"));
+        assert!(output.contains("     2\tSecond line"));
+        assert!(output.contains("     3\tThird line"));
+    }
+
+    #[tokio::test]
+    async fn test_read_without_line_numbers() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "First line\nSecond line\nThird line";
+        let _file_path = create_test_file(&temp_dir, "test.txt", content).await;
+        
+        let mut tool = create_read_tool("test.txt");
+        tool.linenumbers = false; // Disable line numbers
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        // Should NOT have line numbers
+        assert!(!output.contains("\t"));
+        assert_eq!(output.trim(), "First line\nSecond line\nThird line");
+    }
+
+    #[tokio::test]
+    async fn test_read_without_line_numbers_with_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
+        let _file_path = create_test_file(&temp_dir, "test.txt", content).await;
+        
+        let mut tool = create_read_tool("test.txt");
+        tool.linenumbers = false;
+        tool.limit = 3;
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        // Should have first 3 lines without numbers
+        assert!(output.contains("Line 1\nLine 2\nLine 3"));
+        assert!(!output.contains("Line 4"));
+        assert!(!output.contains("\t"));
+    }
+
+    #[tokio::test]
+    async fn test_read_without_line_numbers_with_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+        let content = "apple\nbanana\napricot\nblueberry\navocado";
+        let _file_path = create_test_file(&temp_dir, "test.txt", content).await;
+        
+        let mut tool = create_read_tool("test.txt");
+        tool.linenumbers = false;
+        tool.pattern = Some("^a".to_string()); // Lines starting with 'a'
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        // Should have only lines starting with 'a', no line numbers
+        assert!(output.contains("apple"));
+        assert!(output.contains("apricot"));
+        assert!(output.contains("avocado"));
+        assert!(!output.contains("banana"));
+        assert!(!output.contains("blueberry"));
+        assert!(!output.contains("\t"));
     }
 }

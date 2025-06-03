@@ -38,50 +38,59 @@ pub enum JsonQueryError {
     PathOutsideProject(String),
 }
 
-#[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax.
+#[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax. Preferred tool for JSON manipulation in projects.
 
-Supports both read and write operations with advanced jq features:
+Core Features:
 
-Read operations:
-- Basic queries: \".field\", \".nested.field\", \".array[0]\"
-- Array operations: \".users[]\", \"map(.name)\", \"select(.age > 18)\"
-- Pipe operations: \".users | map(.name) | select(. != null)\"
-- Built-in functions: \"keys\", \"values\", \"length\", \"type\", \"to_entries\", \"from_entries\"
-- String functions: \"split\", \"join\", \"trim\", \"contains\", \"startswith\", \"endswith\", \"ascii_upcase\", \"ascii_downcase\", \"tostring\", \"tonumber\"
-- Arithmetic: \".price * 1.1\", \".x + .y\", \"(.price * .quantity) * (1 + .tax)\"
-- Recursive descent: \"..name\" (find all name fields), \"..\" (all values)
-- Wildcards: \".users.*\" (all user values), \".data.items[*].id\"
-- Object construction: \"{name: .firstName, total: .price * .quantity}\"
-- Conditionals: \"if .age > 18 then \\\"adult\\\" else \\\"minor\\\" end\", \"if .status == \\\"active\\\" then .name end\"
-- Boolean operators: \"if .age >= 18 and .active then \\\"eligible\\\" end\", \"if .premium or .age > 20 then \\\"special\\\" end\", \"if not .disabled then .name end\"
-- Alternative operator: \".timeout // 30\" (use 30 if timeout is null/false), \".name // \\\"Anonymous\\\"\"
-- Optional operator: \".user.profile?\" (returns null instead of error if missing), \".settings?.theme\"
-- Try-catch: \"try .data.value\" (returns null on error), \"try .risky catch \\\"failed\\\"\"
+Data Access & Filtering:
+- Basic access: \".field\", \".nested.field\", \".array[0]\", \".users[*].name\"
+- Array iteration: \".users[]\", \"map(.name)\", \"select(.age > 18)\"
+- Filtering: \"select(.active)\", \"map(select(.score > 80))\"
+- Recursive search: \"..email\" (find all email fields), \"..\" (all values)
+- Wildcards: \".users.*\", \".data.items[*].id\"
 
-Write operations:
-- Simple assignments: \".field = value\", \".nested.field = \\\"text\\\"\"
-- Array element updates: \".items[0] = \\\"new\\\"\"
-- Object updates: \".config = {\\\"host\\\": \\\"localhost\\\", \\\"port\\\": 8080}\"
+Array Operations:
+- Basic: \"add\" (sum/concat), \"min\", \"max\", \"unique\", \"reverse\", \"sort\", \"sort_by(.field)\"
+- Advanced: \"flatten\", \"group_by(.key)\", \"indices(value)\", \"[2:5]\" (slicing)
 
-Examples:
-- Filter array: {\"query\": \".users | select(.active == true)\"}
-- Transform strings: {\"query\": \".name | ascii_upcase | trim\"}
-- Split CSV: {\"query\": \".csv_data | split(\\\",\\\")\"}
-- Calculate total: {\"query\": \".items | map(.price * .quantity) | add\"}
-- Find nested values: {\"query\": \"..email\"}
-- Object transformation: {\"query\": \"to_entries | map({key: .key | ascii_upcase, value}) | from_entries\"}
-- Conditional logic: {\"query\": \"if .score > 90 then \\\"A\\\" else if .score > 80 then \\\"B\\\" else \\\"C\\\" end end\"}
+Object Operations:
+- Tools: \"keys\", \"values\", \"has(\\\"field\\\")\", \"del(.field)\", \"to_entries\", \"from_entries\"
+- Manipulation: \"with_entries(.value *= 2)\", \"paths\", \"leaf_paths\"
 
-Output formats:
-- \"json\": Pretty-printed JSON (default)
-- \"compact\": Compact JSON without formatting
-- \"raw\": Raw string values for simple types
+String Processing:
+- Functions: \"split(\\\",\\\")\", \"join(\\\" \\\")\", \"trim\", \"ltrimstr(\\\"prefix\\\")\", \"rtrimstr(\\\"suffix\\\")\"
+- Case: \"ascii_upcase\", \"ascii_downcase\"
+- Testing: \"contains(\\\"@\\\")\", \"startswith(\\\"http\\\")\", \"test(\\\"^[0-9]+$\\\")\", \"match(\\\"(\\\\d+)\\\")\"
+- Conversion: \"tostring\", \"tonumber\"
 
-Safety features:
+Math & Logic:
+- Arithmetic: \".price * 1.1\", \".x + .y\", \".a % .b\"
+- Math: \"floor\", \"ceil\", \"round\", \"abs\"
+- Conditionals: \"if .age > 18 then \\\"adult\\\" else \\\"minor\\\" end\"
+- Boolean: \".age >= 18 and .active\", \".premium or .vip\", \"not .disabled\"
+- Null handling: \".timeout // 30\", \".user.profile?\", \"try .risky catch \\\"failed\\\"\"
+
+Common Examples:
+- Extract data: \".users | map(.email)\"
+- Filter: \".users | map(select(.active))\"
+- Calculate: \".orders | map(.items | map(.price * .quantity) | add) | add\"
+- Group: \"group_by(.category) | map({category: .[0].category, count: length})\"
+- Transform: \"to_entries | map({name: .key, value: .value | ascii_upcase}) | from_entries\"
+
+Write Operations:
+- Simple: \".field = value\", \".nested.field = \\\"text\\\"\"
+- Array: \".items[0] = \\\"new\\\"\"
+- Bulk: \"map(.active = true)\"
+
+Output Formats:
+- \"json\": Pretty-printed (default)
+- \"compact\": Minified JSON
+- \"raw\": Plain values for simple types
+
+Safety:
 - Restricted to project directory only
-- Automatic backup creation for write operations
-- Atomic writes to prevent file corruption
-- Path validation to prevent directory traversal")]
+- Optional backups for write operations (backup: true)
+- Atomic writes prevent corruption")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct JsonQueryTool {
     /// Path to the JSON file (relative to project root)
@@ -97,8 +106,8 @@ pub struct JsonQueryTool {
     /// Modify file in-place for write operations (default: false)
     #[serde(default)]
     pub in_place: bool,
-    /// Create backup before writing (default: true for write operations)
-    #[serde(default = "default_backup")]
+    /// Create backup before writing (default: false)
+    #[serde(default)]
     pub backup: bool,
 }
 
@@ -110,9 +119,7 @@ fn default_output_format() -> String {
     "json".to_string()
 }
 
-fn default_backup() -> bool {
-    true
-}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonQueryResult {

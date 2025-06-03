@@ -12,6 +12,8 @@ impl JsonQueryExecutor {
     pub fn execute_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
         let query = query.trim();
 
+
+
         
         // Check for if-then-else conditionals
         if query.starts_with("if ") {
@@ -40,8 +42,21 @@ impl JsonQueryExecutor {
             return self.execute_optional_access(data, query);
         }
         
+        // Check for with_entries FIRST (needs executor access)
+        if query.starts_with("with_entries(") && query.ends_with(')') {
+
+            return self.execute_with_entries(data, query);
+        }
+        
+        // Check for del operation
+        if query.starts_with("del(") && query.ends_with(')') {
+            return functions::execute_del_operation(self, data, query);
+        }
+        
         // Check for array operations BEFORE arithmetic (map/select can contain arithmetic)
-        if query.contains("map(") || query.contains("select(") || query.contains("[]") {
+        if query.contains("map(") || query.contains("select(") || query.contains("[]") ||
+           query == "sort" || query.starts_with("sort_by(") || query.starts_with("group_by(") ||
+           (query.starts_with('[') && query.ends_with(']') && query.contains(':')) {
 
             return functions::execute_array_operation(self, data, query);
         }
@@ -59,10 +74,28 @@ impl JsonQueryExecutor {
         }
         
         // Check for string functions
-        if query.contains("split(") || query.contains("join(") || query.contains("trim") ||
-           query.contains("contains(") || query.contains("startswith(") || query.contains("endswith(") ||
-           query.contains("tostring") || query.contains("tonumber") || query.contains("ascii_downcase") ||
-           query.contains("ascii_upcase") {
+        // Note: Don't use contains() for function names as it can match unintended strings
+        if query.starts_with("split(") || query.starts_with(".split(") ||
+           query.starts_with("join(") || query.starts_with(".join(") ||
+           query == "trim" || query == ".trim" ||
+           query.starts_with("contains(") || query.starts_with(".contains(") ||
+           query.starts_with("startswith(") || query.starts_with(".startswith(") ||
+           query.starts_with("endswith(") || query.starts_with(".endswith(") ||
+           query.starts_with("test(") || query.starts_with(".test(") ||
+           query.starts_with("match(") || query.starts_with(".match(") ||
+           query.starts_with("ltrimstr(") || query.starts_with(".ltrimstr(") ||
+           query.starts_with("rtrimstr(") || query.starts_with(".rtrimstr(") ||
+           query == "tostring" || query == ".tostring" ||
+           query == "tonumber" || query == ".tonumber" ||
+           query == "ascii_downcase" || query == ".ascii_downcase" ||
+           query == "ascii_upcase" || query == ".ascii_upcase" ||
+           query.contains(" | split(") || query.contains(" | join(") ||
+           query.contains(" | contains(") || query.contains(" | startswith(") ||
+           query.contains(" | endswith(") || query.contains(" | test(") ||
+           query.contains(" | match(") || query.contains(" | ltrimstr(") ||
+           query.contains(" | rtrimstr(") || query.ends_with(" | trim") ||
+           query.ends_with(" | tostring") || query.ends_with(" | tonumber") ||
+           query.ends_with(" | ascii_downcase") || query.ends_with(" | ascii_upcase") {
 
             return functions::execute_string_function(self, data, query);
         }
@@ -71,9 +104,26 @@ impl JsonQueryExecutor {
         if query == "keys" || query == "values" || query == "length" || query == "type" ||
            query == ".keys" || query == ".values" || query == ".length" || query == ".type" ||
            query == "to_entries" || query == ".to_entries" || query == "from_entries" || query == ".from_entries" ||
+           query == "add" || query == "min" || query == "max" || query == "unique" || 
+           query == "reverse" || query == "sort" || query.starts_with("sort_by(") ||
+           query == "flatten" || query.starts_with("flatten(") ||
+           query.starts_with("indices(") || query.starts_with("has(") ||
+           query == "paths" || query == "leaf_paths" ||
+           query == "floor" || query == ".floor" ||
+           query == "ceil" || query == ".ceil" ||
+           query == "round" || query == ".round" ||
+           query == "abs" || query == ".abs" ||
+           query == "empty" || query == ".empty" ||
+           query.starts_with("error(") ||
            query.ends_with(" | keys") || query.ends_with(" | values") || 
            query.ends_with(" | length") || query.ends_with(" | type") ||
-           query.ends_with(" | to_entries") || query.ends_with(" | from_entries") {
+           query.ends_with(" | to_entries") || query.ends_with(" | from_entries") ||
+           query.ends_with(" | add") || query.ends_with(" | min") || 
+           query.ends_with(" | max") || query.ends_with(" | unique") ||
+           query.ends_with(" | reverse") || query.ends_with(" | sort") ||
+           query.ends_with(" | flatten") ||
+           query.ends_with(" | floor") || query.ends_with(" | ceil") ||
+           query.ends_with(" | round") || query.ends_with(" | abs") {
             return functions::execute_builtin_function(data, query);
         }
         
@@ -108,6 +158,7 @@ impl JsonQueryExecutor {
         }
         
         if !query.starts_with('.') {
+
             return Err(JsonQueryError::InvalidQuery(
                 format!("Query must start with '.': {}", query)
             ));
@@ -157,17 +208,48 @@ impl JsonQueryExecutor {
                 }
                 
                 let index_str: String = chars[i + 1..bracket_end].iter().collect();
-                let index: usize = index_str.parse()
-                    .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid array index: {}", index_str)))?;
                 
-                if let serde_json::Value::Array(arr) = &current {
-                    if index < arr.len() {
-                        current = arr[index].clone();
+                // Check if this is a slice [start:end]
+                if index_str.contains(':') {
+                    let parts: Vec<&str> = index_str.split(':').collect();
+                    if parts.len() != 2 {
+                        return Err(JsonQueryError::InvalidQuery("Invalid slice syntax".to_string()));
+                    }
+                    
+                    if let serde_json::Value::Array(arr) = &current {
+                        let start = if parts[0].is_empty() { 
+                            0 
+                        } else { 
+                            parts[0].parse::<usize>()
+                                .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid start index: {}", parts[0])))?
+                        };
+                        
+                        let end = if parts[1].is_empty() { 
+                            arr.len() 
+                        } else { 
+                            parts[1].parse::<usize>()
+                                .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid end index: {}", parts[1])))?
+                        };
+                        
+                        let slice = arr[start.min(arr.len())..end.min(arr.len())].to_vec();
+                        current = serde_json::Value::Array(slice);
                     } else {
                         return Ok(serde_json::Value::Null);
                     }
                 } else {
-                    return Ok(serde_json::Value::Null);
+                    // Regular array index
+                    let index: usize = index_str.parse()
+                        .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid array index: {}", index_str)))?;
+                    
+                    if let serde_json::Value::Array(arr) = &current {
+                        if index < arr.len() {
+                            current = arr[index].clone();
+                        } else {
+                            return Ok(serde_json::Value::Null);
+                        }
+                    } else {
+                        return Ok(serde_json::Value::Null);
+                    }
                 }
                 
                 i = bracket_end + 1;
@@ -537,6 +619,69 @@ impl JsonQueryExecutor {
             }
         } else {
             Err(JsonQueryError::InvalidQuery("Invalid optional access syntax".to_string()))
+        }
+    }
+    
+    fn execute_with_entries(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let expr = &query[13..query.len()-1];
+        
+        match data {
+            serde_json::Value::Object(map) => {
+                // Convert to entries format
+                let entries: Vec<serde_json::Value> = map.iter().map(|(k, v)| {
+                    serde_json::json!({
+                        "key": k,
+                        "value": v
+                    })
+                }).collect();
+                
+                let entries_array = serde_json::Value::Array(entries);
+                
+                // Apply the expression to each entry
+                let mut transformed_entries = Vec::new();
+                if let serde_json::Value::Array(arr) = &entries_array {
+                    for entry in arr {
+                        // Special handling for assignments within with_entries
+                        let result = if expr.contains('=') && !expr.contains("==") {
+                            // This is likely an assignment
+                            let mut entry_copy = entry.clone();
+                            if let Some(eq_pos) = expr.find('=') {
+                                let path = expr[..eq_pos].trim();
+                                let value_expr = expr[eq_pos + 1..].trim();
+                                
+                                // Evaluate the value expression in the context of the entry
+                                let value = self.execute_query(&entry_copy, value_expr)?;
+                                
+                                // Set the value at the path
+                                self.set_path(&mut entry_copy, path, value)?;
+                                entry_copy
+                            } else {
+                                self.execute_query(entry, expr)?
+                            }
+                        } else {
+                            self.execute_query(entry, expr)?
+                        };
+                        transformed_entries.push(result);
+                    }
+                }
+                
+                // Convert back to object
+                let mut result_map = serde_json::Map::new();
+                for entry in transformed_entries {
+                    if let serde_json::Value::Object(obj) = entry {
+                        if let (Some(key), Some(value)) = (obj.get("key"), obj.get("value")) {
+                            if let serde_json::Value::String(k) = key {
+                                result_map.insert(k.clone(), value.clone());
+                            }
+                        }
+                    }
+                }
+                
+                Ok(serde_json::Value::Object(result_map))
+            }
+            _ => Err(JsonQueryError::ExecutionError(
+                "with_entries can only be applied to objects".to_string()
+            ))
         }
     }
     

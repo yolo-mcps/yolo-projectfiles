@@ -76,7 +76,7 @@ pub fn execute_arithmetic(executor: &JsonQueryExecutor, data: &serde_json::Value
                 '(' if !in_string => paren_depth -= 1,
                 '}' if !in_string => brace_depth += 1,
                 '{' if !in_string => brace_depth -= 1,
-                '*' | '/' if paren_depth == 0 && brace_depth == 0 && !in_string => {
+                '*' | '/' | '%' if paren_depth == 0 && brace_depth == 0 && !in_string => {
                     op_pos = Some(i);
                     op_char = ch;
                     break;
@@ -107,6 +107,12 @@ pub fn execute_arithmetic(executor: &JsonQueryExecutor, data: &serde_json::Value
                             return Err(JsonQueryError::ExecutionError("Division by zero".to_string()));
                         }
                         l_f64 / r_f64
+                    }
+                    '%' => {
+                        if r_f64 == 0.0 {
+                            return Err(JsonQueryError::ExecutionError("Modulo by zero".to_string()));
+                        }
+                        l_f64 % r_f64
                     }
                     _ => return Err(JsonQueryError::InvalidQuery(format!("Unknown operator: {}", op_char)))
                 };
