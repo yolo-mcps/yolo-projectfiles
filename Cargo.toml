@@ -17,7 +17,7 @@ mcp-projectfiles-core = { path = "crates/mcp-projectfiles-core", version = "0.1.
 
 anyhow = "1"
 clap = { version = "4", features = ["cargo", "derive", "env", "string"] }
-thiserror = "2"
+thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.42", features = ["full"] }

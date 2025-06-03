@@ -111,6 +111,7 @@ pub fn format_path(path: &Path) -> String {
 }
 
 /// Format a duration in human-readable format
+#[allow(dead_code)]
 pub fn format_duration(millis: u128) -> String {
     if millis < 1000 {
         format!("{}ms", millis)
@@ -125,6 +126,7 @@ pub fn format_duration(millis: u128) -> String {
 }
 
 /// Format a large number with comma separators
+#[allow(dead_code)]
 pub fn format_number(num: usize) -> String {
     let s = num.to_string();
     let mut result = String::with_capacity(s.len() + s.len() / 3);
