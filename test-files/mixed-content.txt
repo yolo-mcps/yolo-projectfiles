@@ -1,4 +1,0 @@
-Line 1: Normal text content
-Line 2: Text with some binary chars following
-Line 3: More normal content
-Line 4: Final normal line

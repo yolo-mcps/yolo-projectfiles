@@ -1,3 +1,0 @@
-Line with tabs	and newlines
-Unicode: αβγδε ñáéíóú 🚀🎯
-Mixed: "quotes", <tags>, & symbols

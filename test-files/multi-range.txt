@@ -1,6 +1,0 @@
-Line 1: Testing colored diff
-Line 2: Test B
-Line 3: Another color test
-Line 4: Modified B
-Line 5: Final diff color check
-Line 6: Modified B

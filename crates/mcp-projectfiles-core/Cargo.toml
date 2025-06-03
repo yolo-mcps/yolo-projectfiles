@@ -29,6 +29,9 @@ filetime = "0.2"
 similar = "2.3"
 encoding_rs = "0.8"
 dotenv = "0.15"
+serde_yaml = "0.9"
+toml = "0.8"
+jsonpath-rust = "0.5"
 
 [dev-dependencies]
 tokio-test = "0.4"

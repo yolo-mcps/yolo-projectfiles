@@ -1,0 +1,1983 @@
+use crate::context::{StatefulTool, ToolContext};
+use crate::config::tool_errors;
+use async_trait::async_trait;
+use rust_mcp_schema::{
+    CallToolResult, CallToolResultContentItem, schema_utils::CallToolError,
+};
+use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use thiserror::Error;
+use jsonpath_rust::JsonPathQuery;
+
+#[derive(Error, Debug)]
+pub enum JsonQueryError {
+    #[error("Error: projectfiles:jq - File not found: {0}")]
+    FileNotFound(String),
+    
+    #[error("Error: projectfiles:jq - Invalid JSON in file {file}: {error}")]
+    InvalidJson { file: String, error: String },
+    
+    #[error("Error: projectfiles:jq - Invalid query syntax: {0}")]
+    InvalidQuery(String),
+    
+    #[error("Error: projectfiles:jq - Query execution failed: {0}")]
+    ExecutionError(String),
+    
+    #[error("Error: projectfiles:jq - IO error: {0}")]
+    IoError(String),
+    
+    #[error("Error: projectfiles:jq - Path outside project directory: {0}")]
+    PathOutsideProject(String),
+}
+
+#[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax.
+
+Supports both read and write operations with advanced jq features:
+
+Read operations:
+- Basic queries: \".field\", \".nested.field\", \".array[0]\"
+- Array operations: \".users[]\", \"map(.name)\", \"select(.age > 18)\"
+- Pipe operations: \".users | map(.name) | select(. != null)\"
+- Built-in functions: \"keys\", \"values\", \"length\", \"type\", \"to_entries\", \"from_entries\"
+- String functions: \"split\", \"join\", \"trim\", \"contains\", \"startswith\", \"endswith\", \"ascii_upcase\", \"ascii_downcase\", \"tostring\", \"tonumber\"
+- Arithmetic: \".price * 1.1\", \".x + .y\", \"(.price * .quantity) * (1 + .tax)\"
+- Recursive descent: \"..name\" (find all name fields), \"..\" (all values)
+- Wildcards: \".users.*\" (all user values), \".data.items[*].id\"
+- Object construction: \"{name: .firstName, total: .price * .quantity}\"
+- Conditionals: \"if .age > 18 then \\\"adult\\\" else \\\"minor\\\" end\", \"if .status == \\\"active\\\" then .name end\"
+
+Write operations:
+- Simple assignments: \".field = value\", \".nested.field = \\\"text\\\"\"
+- Array element updates: \".items[0] = \\\"new\\\"\"
+- Object updates: \".config = {\\\"host\\\": \\\"localhost\\\", \\\"port\\\": 8080}\"
+
+Examples:
+- Filter array: {\"query\": \".users | select(.active == true)\"}
+- Transform strings: {\"query\": \".name | ascii_upcase | trim\"}
+- Split CSV: {\"query\": \".csv_data | split(\\\",\\\")\"}
+- Calculate total: {\"query\": \".items | map(.price * .quantity) | add\"}
+- Find nested values: {\"query\": \"..email\"}
+- Object transformation: {\"query\": \"to_entries | map({key: .key | ascii_upcase, value}) | from_entries\"}
+- Conditional logic: {\"query\": \"if .score > 90 then \\\"A\\\" else if .score > 80 then \\\"B\\\" else \\\"C\\\" end end\"}
+
+Output formats:
+- \"json\": Pretty-printed JSON (default)
+- \"compact\": Compact JSON without formatting
+- \"raw\": Raw string values for simple types
+
+Safety features:
+- Restricted to project directory only
+- Automatic backup creation for write operations
+- Atomic writes to prevent file corruption
+- Path validation to prevent directory traversal")]
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
+pub struct JsonQueryTool {
+    /// Path to the JSON file (relative to project root)
+    pub file_path: String,
+    /// JSONPath or simple jq-style query string
+    pub query: String,
+    /// Operation type: "read" (default) or "write"
+    #[serde(default = "default_operation")]
+    pub operation: String,
+    /// Output format: "json" (default), "raw", or "compact"
+    #[serde(default = "default_output_format")]
+    pub output_format: String,
+    /// Modify file in-place for write operations (default: false)
+    #[serde(default)]
+    pub in_place: bool,
+    /// Create backup before writing (default: true for write operations)
+    #[serde(default = "default_backup")]
+    pub backup: bool,
+}
+
+fn default_operation() -> String {
+    "read".to_string()
+}
+
+fn default_output_format() -> String {
+    "json".to_string()
+}
+
+fn default_backup() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonQueryResult {
+    pub result: serde_json::Value,
+    pub output: String,
+    pub modified: bool,
+}
+
+impl JsonQueryTool {
+    fn validate_path(&self, file_path: &str) -> Result<std::path::PathBuf, JsonQueryError> {
+        let path = Path::new(file_path);
+        
+        // Ensure path is relative and doesn't escape project directory
+        if path.is_absolute() {
+            return Err(JsonQueryError::PathOutsideProject(file_path.to_string()));
+        }
+        
+        // Check for path traversal attempts
+        for component in path.components() {
+            if let std::path::Component::ParentDir = component {
+                return Err(JsonQueryError::PathOutsideProject(file_path.to_string()));
+            }
+        }
+        
+        Ok(path.to_path_buf())
+    }
+    
+    fn read_json_file(&self, file_path: &Path) -> Result<serde_json::Value, JsonQueryError> {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    JsonQueryError::FileNotFound(file_path.display().to_string())
+                } else {
+                    JsonQueryError::IoError(e.to_string())
+                }
+            })?;
+        
+        serde_json::from_str(&content)
+            .map_err(|e| JsonQueryError::InvalidJson {
+                file: file_path.display().to_string(),
+                error: e.to_string(),
+            })
+    }
+    
+    fn execute_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let query = query.trim();
+        
+        // Check for if-then-else conditionals
+        if query.starts_with("if ") {
+            return self.execute_if_then_else(data, query);
+        }
+        
+        // Check if this is a pipe operation (but not inside parentheses)
+        if self.contains_pipe_outside_parens(query) {
+            return self.execute_pipe_query(data, query);
+        }
+        
+        // Check for arithmetic expressions
+        if self.is_arithmetic_expression(query) {
+            return self.execute_arithmetic(data, query);
+        }
+        
+        // Check for object construction
+        if query.starts_with('{') && query.ends_with('}') {
+            return self.execute_object_construction(data, query);
+        }
+        
+        // Check for array operations
+        if query.contains("map(") || query.contains("select(") || query.contains("[]") {
+            return self.execute_array_operation(data, query);
+        }
+        
+        // Check for string functions
+        if query.contains("split(") || query.contains("join(") || query.contains("trim") ||
+           query.contains("contains(") || query.contains("startswith(") || query.contains("endswith(") ||
+           query.contains("tostring") || query.contains("tonumber") || query.contains("ascii_downcase") ||
+           query.contains("ascii_upcase") {
+            return self.execute_string_function(data, query);
+        }
+        
+        // Check for built-in functions
+        if query == "keys" || query == "values" || query == "length" || query == "type" ||
+           query == ".keys" || query == ".values" || query == ".length" || query == ".type" ||
+           query == "to_entries" || query == ".to_entries" || query == "from_entries" || query == ".from_entries" ||
+           query.ends_with(" | keys") || query.ends_with(" | values") || 
+           query.ends_with(" | length") || query.ends_with(" | type") ||
+           query.ends_with(" | to_entries") || query.ends_with(" | from_entries") {
+            return self.execute_builtin_function(data, query);
+        }
+        
+        // Try JSONPath first for complex queries
+        if query.starts_with('$') || query.contains('*') || query.contains("..") {
+            return self.execute_jsonpath_query(data, query);
+        }
+        
+        // Fall back to simple path query for basic operations
+        self.simple_path_query(data, query)
+    }
+    
+    fn simple_path_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let query = query.trim();
+        
+        // Handle root reference
+        if query == "." {
+            return Ok(data.clone());
+        }
+        
+        if !query.starts_with('.') {
+            return Err(JsonQueryError::InvalidQuery(
+                format!("Query must start with '.': {}", query)
+            ));
+        }
+        
+        // Pipe operations are now handled in execute_query, so we skip this check
+        
+        let path = &query[1..]; // Remove leading '.'
+        if path.is_empty() {
+            return Ok(data.clone());
+        }
+        
+        // Parse the full path with array access support
+        self.parse_complex_path(data, path)
+    }
+    
+    fn parse_complex_path(&self, data: &serde_json::Value, path: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let mut current = data.clone();
+        let mut i = 0;
+        let chars: Vec<char> = path.chars().collect();
+        
+        while i < chars.len() {
+            // Parse field name
+            let mut field_end = i;
+            while field_end < chars.len() && chars[field_end] != '.' && chars[field_end] != '[' {
+                field_end += 1;
+            }
+            
+            if field_end > i {
+                let field_name: String = chars[i..field_end].iter().collect();
+                if let serde_json::Value::Object(obj) = &current {
+                    current = obj.get(&field_name).unwrap_or(&serde_json::Value::Null).clone();
+                } else {
+                    return Ok(serde_json::Value::Null);
+                }
+                i = field_end;
+            }
+            
+            // Handle array access
+            while i < chars.len() && chars[i] == '[' {
+                // Find the closing bracket
+                let mut bracket_end = i + 1;
+                while bracket_end < chars.len() && chars[bracket_end] != ']' {
+                    bracket_end += 1;
+                }
+                
+                if bracket_end >= chars.len() {
+                    return Err(JsonQueryError::InvalidQuery("Missing closing bracket ]".to_string()));
+                }
+                
+                let index_str: String = chars[i + 1..bracket_end].iter().collect();
+                let index: usize = index_str.parse()
+                    .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid array index: {}", index_str)))?;
+                
+                if let serde_json::Value::Array(arr) = &current {
+                    if index < arr.len() {
+                        current = arr[index].clone();
+                    } else {
+                        return Ok(serde_json::Value::Null);
+                    }
+                } else {
+                    return Ok(serde_json::Value::Null);
+                }
+                
+                i = bracket_end + 1;
+            }
+            
+            // Skip dot separator
+            if i < chars.len() && chars[i] == '.' {
+                i += 1;
+            }
+        }
+        
+        Ok(current)
+    }
+    
+
+    
+    fn execute_pipe_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let parts: Vec<&str> = query.split('|').collect();
+        let mut result = data.clone();
+        
+        for part in parts {
+            let part = part.trim();
+            result = self.execute_query(&result, part)?;
+        }
+        
+        Ok(result)
+    }
+    
+    fn execute_array_operation(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let query = query.trim();
+        
+        // Handle .[] (iterate array elements)
+        if query == ".[]" || query == "[]" {
+            if let serde_json::Value::Array(_arr) = data {
+                // For array iteration, we return the array as-is 
+                // In a real jq, this would stream elements, but we'll return the array
+                return Ok(data.clone());
+            } else {
+                return Err(JsonQueryError::ExecutionError(
+                    "Cannot iterate over non-array value".to_string()
+                ));
+            }
+        }
+        
+        // Handle map() operation
+        if query.starts_with("map(") && query.ends_with(')') {
+            let inner = &query[4..query.len()-1];
+            return self.execute_map_operation(data, inner);
+        }
+        
+        // Handle select() operation
+        if query.starts_with("select(") && query.ends_with(')') {
+            let inner = &query[7..query.len()-1];
+            return self.execute_select_operation(data, inner);
+        }
+        
+        // Handle array element iteration with path (.items[] or .users[].name)
+        if query.contains("[]") {
+            return self.handle_array_iterator_syntax(data, query);
+        }
+        
+        Err(JsonQueryError::InvalidQuery(
+            format!("Unsupported array operation: {}", query)
+        ))
+    }
+    
+    fn execute_map_operation(&self, data: &serde_json::Value, expression: &str) -> Result<serde_json::Value, JsonQueryError> {
+        if let serde_json::Value::Array(arr) = data {
+            let mut results = Vec::new();
+            for item in arr {
+                let result = self.execute_query(item, expression)?;
+                results.push(result);
+            }
+            Ok(serde_json::Value::Array(results))
+        } else {
+            Err(JsonQueryError::ExecutionError(
+                "map() can only be applied to arrays".to_string()
+            ))
+        }
+    }
+    
+    fn execute_select_operation(&self, data: &serde_json::Value, condition: &str) -> Result<serde_json::Value, JsonQueryError> {
+        if let serde_json::Value::Array(arr) = data {
+            let mut results = Vec::new();
+            for item in arr {
+                if self.evaluate_condition(item, condition)? {
+                    results.push(item.clone());
+                }
+            }
+            Ok(serde_json::Value::Array(results))
+        } else {
+            // For non-arrays, select acts as a filter on the single value
+            if self.evaluate_condition(data, condition)? {
+                Ok(data.clone())
+            } else {
+                Ok(serde_json::Value::Null)
+            }
+        }
+    }
+    
+    fn evaluate_condition(&self, data: &serde_json::Value, condition: &str) -> Result<bool, JsonQueryError> {
+        let condition = condition.trim();
+        
+        // Handle simple comparisons
+        if condition.contains("==") {
+            let parts: Vec<&str> = condition.split("==").collect();
+            if parts.len() == 2 {
+                let left = self.execute_query(data, parts[0].trim())?;
+                let right = self.parse_value(parts[1].trim())?;
+                return Ok(left == right);
+            }
+        }
+        
+        if condition.contains("!=") {
+            let parts: Vec<&str> = condition.split("!=").collect();
+            if parts.len() == 2 {
+                let left = self.execute_query(data, parts[0].trim())?;
+                let right = self.parse_value(parts[1].trim())?;
+                return Ok(left != right);
+            }
+        }
+        
+        if condition.contains(">") && !condition.contains(">=") {
+            let parts: Vec<&str> = condition.split(">").collect();
+            if parts.len() == 2 {
+                let left = self.execute_query(data, parts[0].trim())?;
+                let right = self.parse_value(parts[1].trim())?;
+                return self.compare_values(&left, &right, ">");
+            }
+        }
+        
+        if condition.contains("<") && !condition.contains("<=") {
+            let parts: Vec<&str> = condition.split("<").collect();
+            if parts.len() == 2 {
+                let left = self.execute_query(data, parts[0].trim())?;
+                let right = self.parse_value(parts[1].trim())?;
+                return self.compare_values(&left, &right, "<");
+            }
+        }
+        
+        // Handle simple value check (truthy/falsy)
+        let value = self.execute_query(data, condition)?;
+        Ok(!value.is_null() && value != serde_json::Value::Bool(false))
+    }
+    
+    fn compare_values(&self, left: &serde_json::Value, right: &serde_json::Value, op: &str) -> Result<bool, JsonQueryError> {
+        match (left, right) {
+            (serde_json::Value::Number(l), serde_json::Value::Number(r)) => {
+                let l_f64 = l.as_f64().unwrap_or(0.0);
+                let r_f64 = r.as_f64().unwrap_or(0.0);
+                match op {
+                    ">" => Ok(l_f64 > r_f64),
+                    "<" => Ok(l_f64 < r_f64),
+                    ">=" => Ok(l_f64 >= r_f64),
+                    "<=" => Ok(l_f64 <= r_f64),
+                    _ => Err(JsonQueryError::InvalidQuery(format!("Unknown operator: {}", op)))
+                }
+            }
+            (serde_json::Value::String(l), serde_json::Value::String(r)) => {
+                match op {
+                    ">" => Ok(l > r),
+                    "<" => Ok(l < r),
+                    ">=" => Ok(l >= r),
+                    "<=" => Ok(l <= r),
+                    _ => Err(JsonQueryError::InvalidQuery(format!("Unknown operator: {}", op)))
+                }
+            }
+            _ => Ok(false)
+        }
+    }
+    
+    fn parse_value(&self, value_str: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let value_str = value_str.trim();
+        
+        if value_str == "true" {
+            Ok(serde_json::Value::Bool(true))
+        } else if value_str == "false" {
+            Ok(serde_json::Value::Bool(false))
+        } else if value_str == "null" {
+            Ok(serde_json::Value::Null)
+        } else if let Ok(num) = value_str.parse::<i64>() {
+            Ok(serde_json::Value::Number(serde_json::Number::from(num)))
+        } else if let Ok(num) = value_str.parse::<f64>() {
+            Ok(serde_json::Value::Number(serde_json::Number::from_f64(num).unwrap_or(serde_json::Number::from(0))))
+        } else if value_str.starts_with('"') && value_str.ends_with('"') {
+            // Already quoted string - parse as JSON
+            serde_json::from_str(value_str)
+                .map_err(|e| JsonQueryError::InvalidQuery(format!("Invalid JSON string '{}': {}", value_str, e)))
+        } else if value_str.starts_with('[') || value_str.starts_with('{') {
+            // JSON array or object
+            serde_json::from_str(value_str)
+                .map_err(|e| JsonQueryError::InvalidQuery(format!("Invalid JSON '{}': {}", value_str, e)))
+        } else {
+            // Treat as unquoted string
+            Ok(serde_json::Value::String(value_str.to_string()))
+        }
+    }
+    
+    fn execute_builtin_function(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let query = query.trim();
+        
+        // Handle keys function
+        if query == "keys" || query == ".keys" {
+            match data {
+                serde_json::Value::Object(map) => {
+                    let mut keys: Vec<String> = map.keys().cloned().collect();
+                    keys.sort();
+                    let json_keys: Vec<serde_json::Value> = keys.into_iter()
+                        .map(serde_json::Value::String)
+                        .collect();
+                    Ok(serde_json::Value::Array(json_keys))
+                }
+                serde_json::Value::Array(arr) => {
+                    // For arrays, keys returns indices
+                    let indices: Vec<serde_json::Value> = (0..arr.len())
+                        .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
+                        .collect();
+                    Ok(serde_json::Value::Array(indices))
+                }
+                _ => Err(JsonQueryError::ExecutionError(
+                    "keys can only be applied to objects or arrays".to_string()
+                ))
+            }
+        }
+        // Handle values function
+        else if query == "values" || query == ".values" {
+            match data {
+                serde_json::Value::Object(map) => {
+                    let values: Vec<serde_json::Value> = map.values().cloned().collect();
+                    Ok(serde_json::Value::Array(values))
+                }
+                _ => Err(JsonQueryError::ExecutionError(
+                    "values can only be applied to objects".to_string()
+                ))
+            }
+        }
+        // Handle length function
+        else if query == "length" || query == ".length" {
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::Number(serde_json::Number::from(s.len()))),
+                serde_json::Value::Array(arr) => Ok(serde_json::Value::Number(serde_json::Number::from(arr.len()))),
+                serde_json::Value::Object(map) => Ok(serde_json::Value::Number(serde_json::Number::from(map.len()))),
+                serde_json::Value::Null => Ok(serde_json::Value::Number(serde_json::Number::from(0))),
+                _ => Ok(serde_json::Value::Number(serde_json::Number::from(0)))
+            }
+        }
+        // Handle type function
+        else if query == "type" || query == ".type" {
+            let type_str = match data {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "boolean",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) => "string",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Object(_) => "object",
+            };
+            Ok(serde_json::Value::String(type_str.to_string()))
+        }
+        // Handle to_entries function
+        else if query == "to_entries" || query == ".to_entries" {
+            match data {
+                serde_json::Value::Object(map) => {
+                    let entries: Vec<serde_json::Value> = map.iter()
+                        .map(|(k, v)| {
+                            let mut entry = serde_json::Map::new();
+                            entry.insert("key".to_string(), serde_json::Value::String(k.clone()));
+                            entry.insert("value".to_string(), v.clone());
+                            serde_json::Value::Object(entry)
+                        })
+                        .collect();
+                    Ok(serde_json::Value::Array(entries))
+                }
+                _ => Err(JsonQueryError::ExecutionError(
+                    "to_entries can only be applied to objects".to_string()
+                ))
+            }
+        }
+        // Handle from_entries function
+        else if query == "from_entries" || query == ".from_entries" {
+            match data {
+                serde_json::Value::Array(arr) => {
+                    let mut result = serde_json::Map::new();
+                    for entry in arr {
+                        if let serde_json::Value::Object(obj) = entry {
+                            if let (Some(key_val), Some(value)) = (obj.get("key"), obj.get("value")) {
+                                if let serde_json::Value::String(key) = key_val {
+                                    result.insert(key.clone(), value.clone());
+                                } else {
+                                    return Err(JsonQueryError::ExecutionError(
+                                        "from_entries requires entries with string keys".to_string()
+                                    ));
+                                }
+                            } else {
+                                return Err(JsonQueryError::ExecutionError(
+                                    "from_entries requires entries with 'key' and 'value' fields".to_string()
+                                ));
+                            }
+                        } else {
+                            return Err(JsonQueryError::ExecutionError(
+                                "from_entries requires an array of objects".to_string()
+                            ));
+                        }
+                    }
+                    Ok(serde_json::Value::Object(result))
+                }
+                _ => Err(JsonQueryError::ExecutionError(
+                    "from_entries can only be applied to arrays".to_string()
+                ))
+            }
+        }
+        else {
+            Err(JsonQueryError::InvalidQuery(
+                format!("Unknown function: {}", query)
+            ))
+        }
+    }
+    
+    fn handle_array_iterator_syntax(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Handle patterns like .items[], .users[].name, .departments[].employees
+        if let Some(bracket_pos) = query.find("[]") {
+            let before_bracket = &query[..bracket_pos];
+            let after_bracket = &query[bracket_pos + 2..];
+            
+            // Get the array to iterate over
+            let array_data = if before_bracket.is_empty() || before_bracket == "." {
+                data.clone()
+            } else {
+                self.simple_path_query(data, before_bracket)?
+            };
+            
+            if let serde_json::Value::Array(arr) = array_data {
+                let mut results = Vec::new();
+                
+                for item in arr {
+                    if after_bracket.is_empty() {
+                        // Just .items[] - return all items
+                        results.push(item.clone());
+                    } else if after_bracket.starts_with('.') {
+                        // .items[].name - apply the rest of the path to each item
+                        let item_result = self.execute_query(&item, after_bracket)?;
+                        // For nested arrays, flatten them
+                        if let serde_json::Value::Array(nested_arr) = item_result {
+                            results.extend(nested_arr);
+                        } else {
+                            results.push(item_result);
+                        }
+                    } else {
+                        return Err(JsonQueryError::InvalidQuery(
+                            format!("Invalid syntax after []: {}", after_bracket)
+                        ));
+                    }
+                }
+                
+                Ok(serde_json::Value::Array(results))
+            } else {
+                Err(JsonQueryError::ExecutionError(
+                    format!("Cannot iterate with [] on non-array value at path: {}", before_bracket)
+                ))
+            }
+        } else {
+            Err(JsonQueryError::InvalidQuery(
+                "Expected [] in query".to_string()
+            ))
+        }
+    }
+
+    fn execute_jsonpath_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Handle recursive descent (..)
+        if query.contains("..") {
+            return self.handle_recursive_descent(data, query);
+        }
+        
+        // Handle wildcard (*)
+        if query.contains("*") && !query.contains("[*]") {
+            return self.handle_wildcard_query(data, query);
+        }
+        
+        // Convert jq-style query to JSONPath if needed
+        let jsonpath_query = if query.starts_with('$') {
+            query.to_string()
+        } else if query.contains("[*]") {
+            // Convert .array[*] to $.array[*]
+            format!("${}", query)
+        } else {
+            // Convert simple jq queries to JSONPath
+            format!("${}", query)
+        };
+        
+        match data.clone().path(&jsonpath_query) {
+            Ok(result) => {
+                // JSONPath returns a Vec of results
+                match result.as_array() {
+                    Some(arr) if arr.len() == 1 => Ok(arr[0].clone()),
+                    Some(arr) if arr.is_empty() => Ok(serde_json::Value::Null),
+                    _ => Ok(result)
+                }
+            }
+            Err(e) => Err(JsonQueryError::InvalidQuery(
+                format!("JSONPath query failed: {}", e)
+            ))
+        }
+    }
+    
+    fn handle_recursive_descent(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Handle patterns like ..name (find all "name" fields recursively)
+        if query == ".." {
+            // Return all values recursively
+            let mut results = Vec::new();
+            self.collect_all_values(data, &mut results);
+            return Ok(serde_json::Value::Array(results));
+        }
+        
+        if let Some(field_start) = query.find("..") {
+            let field_name = &query[field_start + 2..];
+            if field_name.is_empty() {
+                return Err(JsonQueryError::InvalidQuery(
+                    "Recursive descent (..) must be followed by a field name".to_string()
+                ));
+            }
+            
+            let mut results = Vec::new();
+            self.find_field_recursively(data, field_name, &mut results);
+            
+            if results.is_empty() {
+                Ok(serde_json::Value::Null)
+            } else if results.len() == 1 {
+                Ok(results[0].clone())
+            } else {
+                Ok(serde_json::Value::Array(results))
+            }
+        } else {
+            Err(JsonQueryError::InvalidQuery(
+                "Invalid recursive descent query".to_string()
+            ))
+        }
+    }
+    
+    fn collect_all_values(&self, data: &serde_json::Value, results: &mut Vec<serde_json::Value>) {
+        match data {
+            serde_json::Value::Object(map) => {
+                for value in map.values() {
+                    results.push(value.clone());
+                    self.collect_all_values(value, results);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    results.push(item.clone());
+                    self.collect_all_values(item, results);
+                }
+            }
+            _ => {
+                // Leaf values are already added by their parent
+            }
+        }
+    }
+    
+    fn find_field_recursively(&self, data: &serde_json::Value, field_name: &str, results: &mut Vec<serde_json::Value>) {
+        match data {
+            serde_json::Value::Object(map) => {
+                // Check if this object has the field
+                if let Some(value) = map.get(field_name) {
+                    results.push(value.clone());
+                }
+                // Recurse into all values
+                for value in map.values() {
+                    self.find_field_recursively(value, field_name, results);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                // Recurse into array elements
+                for item in arr {
+                    self.find_field_recursively(item, field_name, results);
+                }
+            }
+            _ => {
+                // Leaf values don't contain fields
+            }
+        }
+    }
+    
+    fn handle_wildcard_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Handle patterns like .* (all fields) or .users.* (all fields of users)
+        if query == ".*" || query == "*" {
+            match data {
+                serde_json::Value::Object(map) => {
+                    let values: Vec<serde_json::Value> = map.values().cloned().collect();
+                    Ok(serde_json::Value::Array(values))
+                }
+                serde_json::Value::Array(_) => {
+                    // For arrays, * means all elements
+                    Ok(data.clone())
+                }
+                _ => Ok(serde_json::Value::Null)
+            }
+        } else if query.ends_with(".*") {
+            let path = &query[..query.len() - 2];
+            let parent = if path.is_empty() {
+                data.clone()
+            } else {
+                self.simple_path_query(data, path)?
+            };
+            
+            match parent {
+                serde_json::Value::Object(map) => {
+                    let values: Vec<serde_json::Value> = map.values().cloned().collect();
+                    Ok(serde_json::Value::Array(values))
+                }
+                _ => Err(JsonQueryError::ExecutionError(
+                    "Wildcard can only be applied to objects".to_string()
+                ))
+            }
+        } else {
+            // Try using JSONPath for more complex wildcard patterns
+            let jsonpath_query = format!("${}", query);
+            match data.clone().path(&jsonpath_query) {
+                Ok(result) => Ok(result),
+                Err(e) => Err(JsonQueryError::InvalidQuery(
+                    format!("Wildcard query failed: {}", e)
+                ))
+            }
+        }
+    }
+
+    fn execute_object_construction(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Handle object construction like {name: .user.name, age: .user.age}
+        let content = &query[1..query.len()-1]; // Remove { and }
+        let mut result_map = serde_json::Map::new();
+        
+        // Simple parser for key: value pairs
+        let pairs: Vec<&str> = content.split(',').collect();
+        
+        for pair in pairs {
+            let pair = pair.trim();
+            if let Some(colon_pos) = pair.find(':') {
+                let key = pair[..colon_pos].trim();
+                let value_expr = pair[colon_pos + 1..].trim();
+                
+                // Remove quotes from key if present
+                let clean_key = if key.starts_with('"') && key.ends_with('"') {
+                    &key[1..key.len()-1]
+                } else {
+                    key
+                };
+                
+                // Execute the value expression
+                let value = if value_expr.starts_with('.') {
+                    self.execute_query(data, value_expr)?
+                } else if value_expr == "true" || value_expr == "false" || 
+                         value_expr == "null" || value_expr.parse::<f64>().is_ok() ||
+                         (value_expr.starts_with('"') && value_expr.ends_with('"')) {
+                    self.parse_value(value_expr)?
+                } else {
+                    // Treat as a literal string if not a path or JSON value
+                    serde_json::Value::String(value_expr.to_string())
+                };
+                
+                result_map.insert(clean_key.to_string(), value);
+            } else {
+                return Err(JsonQueryError::InvalidQuery(
+                    format!("Invalid object construction syntax: {}", pair)
+                ));
+            }
+        }
+        
+        Ok(serde_json::Value::Object(result_map))
+    }
+
+    fn contains_pipe_outside_parens(&self, query: &str) -> bool {
+        let mut paren_depth = 0;
+        for ch in query.chars() {
+            match ch {
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '|' if paren_depth == 0 => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+    
+    fn is_arithmetic_expression(&self, query: &str) -> bool {
+        // Check if the query contains arithmetic operators
+        query.contains(" + ") || query.contains(" - ") || 
+        query.contains(" * ") || query.contains(" / ") || 
+        query.contains(" % ") || query.starts_with("(") && query.ends_with(")")
+    }
+    
+    fn execute_arithmetic(&self, data: &serde_json::Value, expression: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let expression = expression.trim();
+        
+        // Handle parentheses
+        if expression.starts_with('(') && expression.ends_with(')') {
+            let inner = &expression[1..expression.len()-1];
+            return self.execute_arithmetic(data, inner);
+        }
+        
+        // Find operators in correct precedence order
+        // First check for lower precedence operators (+ and -)
+        for (op_str, op) in &[(" + ", "+"), (" - ", "-")] {
+            if let Some(pos) = self.find_operator_outside_quotes(expression, op_str) {
+                let left_expr = &expression[..pos].trim();
+                let right_expr = &expression[pos + op_str.len()..].trim();
+                
+                let left_val = self.execute_arithmetic(data, left_expr)?;
+                let right_val = self.execute_arithmetic(data, right_expr)?;
+                
+                return self.apply_arithmetic_op(&left_val, &right_val, op);
+            }
+        }
+        
+        // Then check for higher precedence operators (*, /, %)
+        for (op_str, op) in &[(" * ", "*"), (" / ", "/"), (" % ", "%")] {
+            if let Some(pos) = self.find_operator_outside_quotes(expression, op_str) {
+                let left_expr = &expression[..pos].trim();
+                let right_expr = &expression[pos + op_str.len()..].trim();
+                
+                let left_val = self.evaluate_arithmetic_operand(data, left_expr)?;
+                let right_val = self.evaluate_arithmetic_operand(data, right_expr)?;
+                
+                return self.apply_arithmetic_op(&left_val, &right_val, op);
+            }
+        }
+        
+        // No operator found, evaluate as single operand
+        self.evaluate_arithmetic_operand(data, expression)
+    }
+    
+    fn find_operator_outside_quotes(&self, expression: &str, op: &str) -> Option<usize> {
+        let mut in_quotes = false;
+        let mut escape_next = false;
+        let mut paren_depth = 0;
+        let chars: Vec<char> = expression.chars().collect();
+        let op_chars: Vec<char> = op.chars().collect();
+        
+        // Search from right to left for correct precedence
+        for i in (0..chars.len()).rev() {
+            if i + op_chars.len() > chars.len() {
+                continue;
+            }
+            
+            // Track parentheses depth
+            for j in i..chars.len() {
+                match chars[j] {
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -= 1,
+                    '"' if !escape_next => in_quotes = !in_quotes,
+                    '\\' => escape_next = true,
+                    _ => escape_next = false,
+                }
+            }
+            
+            // Reset for checking at position i
+            in_quotes = false;
+            escape_next = false;
+            paren_depth = 0;
+            
+            // Check state up to position i
+            for j in 0..i {
+                match chars[j] {
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -= 1,
+                    '"' if !escape_next => in_quotes = !in_quotes,
+                    '\\' => escape_next = true,
+                    _ => escape_next = false,
+                }
+            }
+            
+            if !in_quotes && paren_depth == 0 && i + op_chars.len() <= chars.len() {
+                let slice: String = chars[i..i + op_chars.len()].iter().collect();
+                if slice == op {
+                    return Some(i);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    fn evaluate_arithmetic_operand(&self, data: &serde_json::Value, operand: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let operand = operand.trim();
+        
+        // Check if it's a string literal
+        if operand.starts_with('"') && operand.ends_with('"') {
+            return Ok(serde_json::Value::String(operand[1..operand.len()-1].to_string()));
+        }
+        
+        // Check if it's a number literal
+        if let Ok(num) = operand.parse::<f64>() {
+            return Ok(serde_json::Value::Number(
+                serde_json::Number::from_f64(num).unwrap_or(serde_json::Number::from(0))
+            ));
+        }
+        
+        // Check if it's a path expression
+        if operand.starts_with('.') {
+            return self.simple_path_query(data, operand);
+        }
+        
+        // Check if it contains arithmetic (nested expression)
+        if self.is_arithmetic_expression(operand) {
+            return self.execute_arithmetic(data, operand);
+        }
+        
+        // Try to parse as JSON value
+        self.parse_value(operand)
+    }
+    
+    fn apply_arithmetic_op(&self, left: &serde_json::Value, right: &serde_json::Value, op: &str) -> Result<serde_json::Value, JsonQueryError> {
+        match (left, right) {
+            (serde_json::Value::Number(l), serde_json::Value::Number(r)) => {
+                let l_f64 = l.as_f64().unwrap_or(0.0);
+                let r_f64 = r.as_f64().unwrap_or(0.0);
+                
+                let result = match op {
+                    "+" => l_f64 + r_f64,
+                    "-" => l_f64 - r_f64,
+                    "*" => l_f64 * r_f64,
+                    "/" => {
+                        if r_f64 == 0.0 {
+                            return Err(JsonQueryError::ExecutionError("Division by zero".to_string()));
+                        }
+                        l_f64 / r_f64
+                    }
+                    "%" => l_f64 % r_f64,
+                    _ => return Err(JsonQueryError::InvalidQuery(format!("Unknown operator: {}", op)))
+                };
+                
+                Ok(serde_json::Value::Number(
+                    serde_json::Number::from_f64(result).unwrap_or(serde_json::Number::from(0))
+                ))
+            }
+            (serde_json::Value::String(l), serde_json::Value::String(r)) if op == "+" => {
+                // String concatenation
+                Ok(serde_json::Value::String(format!("{}{}", l, r)))
+            }
+            (serde_json::Value::Array(l), serde_json::Value::Array(r)) if op == "+" => {
+                // Array concatenation
+                let mut result = l.clone();
+                result.extend(r.clone());
+                Ok(serde_json::Value::Array(result))
+            }
+            _ => Err(JsonQueryError::ExecutionError(
+                format!("Cannot apply {} operator to {:?} and {:?}", op, left, right)
+            ))
+        }
+    }
+
+    fn execute_string_function(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        let query = query.trim();
+        
+        // Handle tostring
+        if query == "tostring" || query == ".tostring" {
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+                serde_json::Value::Number(n) => Ok(serde_json::Value::String(n.to_string())),
+                serde_json::Value::Bool(b) => Ok(serde_json::Value::String(b.to_string())),
+                serde_json::Value::Null => Ok(serde_json::Value::String("null".to_string())),
+                _ => Ok(serde_json::Value::String(data.to_string()))
+            }
+        }
+        // Handle tonumber
+        else if query == "tonumber" || query == ".tonumber" {
+            match data {
+                serde_json::Value::Number(n) => Ok(serde_json::Value::Number(n.clone())),
+                serde_json::Value::String(s) => {
+                    s.parse::<f64>()
+                        .map(|n| serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))))
+                        .map_err(|_| JsonQueryError::ExecutionError(format!("Cannot convert '{}' to number", s)))
+                }
+                _ => Err(JsonQueryError::ExecutionError("tonumber can only be applied to strings or numbers".to_string()))
+            }
+        }
+        // Handle trim
+        else if query == "trim" || query == ".trim" {
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::String(s.trim().to_string())),
+                _ => Err(JsonQueryError::ExecutionError("trim can only be applied to strings".to_string()))
+            }
+        }
+        // Handle ascii_downcase
+        else if query == "ascii_downcase" || query == ".ascii_downcase" {
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::String(s.to_lowercase())),
+                _ => Err(JsonQueryError::ExecutionError("ascii_downcase can only be applied to strings".to_string()))
+            }
+        }
+        // Handle ascii_upcase
+        else if query == "ascii_upcase" || query == ".ascii_upcase" {
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::String(s.to_uppercase())),
+                _ => Err(JsonQueryError::ExecutionError("ascii_upcase can only be applied to strings".to_string()))
+            }
+        }
+        // Handle split()
+        else if query.starts_with("split(") && query.ends_with(')') {
+            let arg = &query[6..query.len()-1];
+            let separator = self.parse_string_arg(arg)?;
+            
+            match data {
+                serde_json::Value::String(s) => {
+                    let parts: Vec<serde_json::Value> = s.split(&separator)
+                        .map(|p| serde_json::Value::String(p.to_string()))
+                        .collect();
+                    Ok(serde_json::Value::Array(parts))
+                }
+                _ => Err(JsonQueryError::ExecutionError("split can only be applied to strings".to_string()))
+            }
+        }
+        // Handle join()
+        else if query.starts_with("join(") && query.ends_with(')') {
+            let arg = &query[5..query.len()-1];
+            let separator = self.parse_string_arg(arg)?;
+            
+            match data {
+                serde_json::Value::Array(arr) => {
+                    let strings: Result<Vec<String>, _> = arr.iter()
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => Ok(s.clone()),
+                            serde_json::Value::Number(n) => Ok(n.to_string()),
+                            serde_json::Value::Bool(b) => Ok(b.to_string()),
+                            serde_json::Value::Null => Ok("null".to_string()),
+                            _ => Err(JsonQueryError::ExecutionError("join requires array of primitive values".to_string()))
+                        })
+                        .collect();
+                    
+                    let strings = strings?;
+                    Ok(serde_json::Value::String(strings.join(&separator)))
+                }
+                _ => Err(JsonQueryError::ExecutionError("join can only be applied to arrays".to_string()))
+            }
+        }
+        // Handle contains()
+        else if query.starts_with("contains(") && query.ends_with(')') {
+            let arg = &query[9..query.len()-1];
+            let search = self.parse_string_arg(arg)?;
+            
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::Bool(s.contains(&search))),
+                _ => Err(JsonQueryError::ExecutionError("contains can only be applied to strings".to_string()))
+            }
+        }
+        // Handle startswith()
+        else if query.starts_with("startswith(") && query.ends_with(')') {
+            let arg = &query[11..query.len()-1];
+            let prefix = self.parse_string_arg(arg)?;
+            
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::Bool(s.starts_with(&prefix))),
+                _ => Err(JsonQueryError::ExecutionError("startswith can only be applied to strings".to_string()))
+            }
+        }
+        // Handle endswith()
+        else if query.starts_with("endswith(") && query.ends_with(')') {
+            let arg = &query[9..query.len()-1];
+            let suffix = self.parse_string_arg(arg)?;
+            
+            match data {
+                serde_json::Value::String(s) => Ok(serde_json::Value::Bool(s.ends_with(&suffix))),
+                _ => Err(JsonQueryError::ExecutionError("endswith can only be applied to strings".to_string()))
+            }
+        }
+        else {
+            Err(JsonQueryError::InvalidQuery(format!("Unknown string function: {}", query)))
+        }
+    }
+    
+    fn parse_string_arg(&self, arg: &str) -> Result<String, JsonQueryError> {
+        let arg = arg.trim();
+        if arg.starts_with('"') && arg.ends_with('"') && arg.len() >= 2 {
+            Ok(arg[1..arg.len()-1].to_string())
+        } else {
+            Err(JsonQueryError::InvalidQuery(format!("String argument must be quoted: {}", arg)))
+        }
+    }
+    
+    fn execute_if_then_else(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, JsonQueryError> {
+        // Parse if-then-else structure: if CONDITION then EXPR else EXPR end
+        // Also support: if CONDITION then EXPR end (without else)
+        
+        if !query.starts_with("if ") {
+            return Err(JsonQueryError::InvalidQuery("Conditional must start with 'if'".to_string()));
+        }
+        
+        // Find the keywords
+        let then_pos = query.find(" then ");
+        let else_pos = query.find(" else ");
+        let end_pos = query.rfind(" end");
+        
+        if then_pos.is_none() {
+            return Err(JsonQueryError::InvalidQuery("Missing 'then' in conditional".to_string()));
+        }
+        
+        if end_pos.is_none() {
+            return Err(JsonQueryError::InvalidQuery("Missing 'end' in conditional".to_string()));
+        }
+        
+        let then_pos = then_pos.unwrap();
+        let end_pos = end_pos.unwrap();
+        
+        // Extract the parts
+        let condition = &query[3..then_pos].trim(); // Skip "if "
+        
+        let (then_expr, else_expr) = if let Some(else_pos) = else_pos {
+            if else_pos < then_pos || else_pos > end_pos {
+                return Err(JsonQueryError::InvalidQuery("Invalid if-then-else structure".to_string()));
+            }
+            let then_expr = &query[then_pos + 6..else_pos].trim(); // Skip " then "
+            let else_expr = &query[else_pos + 6..end_pos].trim(); // Skip " else "
+            (then_expr, Some(else_expr))
+        } else {
+            let then_expr = &query[then_pos + 6..end_pos].trim(); // Skip " then "
+            (then_expr, None)
+        };
+        
+        // Evaluate the condition
+        let condition_result = self.evaluate_condition(data, condition)?;
+        
+        // Execute the appropriate branch
+        if condition_result {
+            self.execute_query(data, then_expr)
+        } else if let Some(else_expr) = else_expr {
+            self.execute_query(data, else_expr)
+        } else {
+            // No else branch and condition is false - return null
+            Ok(serde_json::Value::Null)
+        }
+    }
+
+    fn parse_assignment(&self, query: &str) -> Result<Option<(String, serde_json::Value)>, JsonQueryError> {
+        // Parse simple assignment patterns like ".field = value"
+        if let Some(eq_pos) = query.find('=') {
+            let path = query[..eq_pos].trim();
+            let value_str = query[eq_pos + 1..].trim();
+            
+            // Parse the value as JSON, handling different types properly
+            let value = if value_str == "true" {
+                serde_json::Value::Bool(true)
+            } else if value_str == "false" {
+                serde_json::Value::Bool(false)
+            } else if value_str == "null" {
+                serde_json::Value::Null
+            } else if let Ok(num) = value_str.parse::<i64>() {
+                serde_json::Value::Number(serde_json::Number::from(num))
+            } else if let Ok(num) = value_str.parse::<f64>() {
+                serde_json::Value::Number(serde_json::Number::from_f64(num).unwrap_or(serde_json::Number::from(0)))
+            } else if value_str.starts_with('"') && value_str.ends_with('"') {
+                // Already quoted string - parse as JSON
+                serde_json::from_str(value_str)
+                    .map_err(|e| JsonQueryError::InvalidQuery(format!("Invalid JSON string '{}': {}", value_str, e)))?
+            } else if value_str.starts_with('[') || value_str.starts_with('{') {
+                // JSON array or object
+                serde_json::from_str(value_str)
+                    .map_err(|e| JsonQueryError::InvalidQuery(format!("Invalid JSON '{}': {}", value_str, e)))?
+            } else {
+                // Treat as unquoted string
+                serde_json::Value::String(value_str.to_string())
+            };
+            
+            Ok(Some((path.to_string(), value)))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn apply_assignment(&self, data: &mut serde_json::Value, path: &str, value: serde_json::Value) -> Result<(), JsonQueryError> {
+        // Apply assignment to JSON data using complex path parsing
+        if path == "." {
+            *data = value;
+            return Ok(());
+        }
+        
+        if !path.starts_with('.') {
+            return Err(JsonQueryError::InvalidQuery(
+                "Assignment path must start with '.'".to_string()
+            ));
+        }
+        
+        let path = &path[1..]; // Remove leading '.'
+        
+        // Use the same complex path parsing logic as read operations
+        self.set_complex_path(data, path, value)
+    }
+    
+    fn set_complex_path(&self, data: &mut serde_json::Value, path: &str, value: serde_json::Value) -> Result<(), JsonQueryError> {
+        let mut current = data;
+        let mut i = 0;
+        let chars: Vec<char> = path.chars().collect();
+        
+        while i < chars.len() {
+            let mut segment = String::new();
+            
+            // Read until we hit '[', '.', or end of string
+            while i < chars.len() && chars[i] != '[' && chars[i] != '.' {
+                segment.push(chars[i]);
+                i += 1;
+            }
+            
+            // Check if this segment is followed by array access
+            let is_array_access = i < chars.len() && chars[i] == '[';
+            
+            // If we have a segment, navigate to it
+            if !segment.is_empty() {
+                // Check if this is the final segment (no array access and at end of path)
+                if !is_array_access && i >= chars.len() {
+                    // This is the final segment - set the value
+                    if let serde_json::Value::Object(obj) = current {
+                        obj.insert(segment, value);
+                        return Ok(());
+                    } else {
+                        return Err(JsonQueryError::ExecutionError(
+                            format!("Cannot set field '{}' on non-object value", segment)
+                        ));
+                    }
+                } else if is_array_access {
+                    // This segment refers to an array - just navigate to it
+                    if let serde_json::Value::Object(obj) = current {
+                        current = obj.get_mut(&segment)
+                            .ok_or_else(|| JsonQueryError::ExecutionError(
+                                format!("Field '{}' not found", segment)
+                            ))?;
+                    } else {
+                        return Err(JsonQueryError::ExecutionError(
+                            format!("Cannot access field '{}' on non-object value", segment)
+                        ));
+                    }
+                } else {
+                    // This is an intermediate object field
+                    if let serde_json::Value::Object(obj) = current {
+                        // Get or create the field
+                        current = obj.entry(segment.clone())
+                            .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+                    } else {
+                        return Err(JsonQueryError::ExecutionError(
+                            format!("Cannot access field '{}' on non-object value", segment)
+                        ));
+                    }
+                }
+            }
+            
+            // Handle array access
+            if is_array_access {
+                i += 1; // skip '['
+                let mut index_str = String::new();
+                while i < chars.len() && chars[i] != ']' {
+                    index_str.push(chars[i]);
+                    i += 1;
+                }
+                if i >= chars.len() {
+                    return Err(JsonQueryError::InvalidQuery("Unclosed bracket".to_string()));
+                }
+                i += 1; // skip ']'
+                
+                let index = index_str.parse::<usize>()
+                    .map_err(|_| JsonQueryError::InvalidQuery(format!("Invalid array index: {}", index_str)))?;
+                
+                // Check if this is the final access
+                if i >= chars.len() {
+                    // This is the final array access - set the value
+                    if let serde_json::Value::Array(arr) = current {
+                        if index >= arr.len() {
+                            return Err(JsonQueryError::ExecutionError(
+                                format!("Array index {} out of bounds", index)
+                            ));
+                        }
+                        arr[index] = value;
+                        return Ok(());
+                    } else {
+                        return Err(JsonQueryError::ExecutionError(
+                            "Cannot index non-array value".to_string()
+                        ));
+                    }
+                } else {
+                    // Navigate to this array element
+                    if let serde_json::Value::Array(arr) = current {
+                        if index >= arr.len() {
+                            return Err(JsonQueryError::ExecutionError(
+                                format!("Array index {} out of bounds", index)
+                            ));
+                        }
+                        current = &mut arr[index];
+                    } else {
+                        return Err(JsonQueryError::ExecutionError(
+                            "Cannot index non-array value".to_string()
+                        ));
+                    }
+                }
+            }
+            
+            // Skip dots
+            if i < chars.len() && chars[i] == '.' {
+                i += 1;
+            }
+        }
+        
+        Ok(())
+    }
+
+
+    
+    fn format_output(&self, value: &serde_json::Value, format: &str) -> Result<String, JsonQueryError> {
+        match format {
+            "json" => serde_json::to_string_pretty(value)
+                .map_err(|e| JsonQueryError::ExecutionError(format!("JSON serialization failed: {}", e))),
+            "compact" => serde_json::to_string(value)
+                .map_err(|e| JsonQueryError::ExecutionError(format!("JSON serialization failed: {}", e))),
+            "raw" => {
+                match value {
+                    serde_json::Value::String(s) => Ok(s.clone()),
+                    serde_json::Value::Number(n) => Ok(n.to_string()),
+                    serde_json::Value::Bool(b) => Ok(b.to_string()),
+                    serde_json::Value::Null => Ok("null".to_string()),
+                    _ => serde_json::to_string_pretty(value)
+                        .map_err(|e| JsonQueryError::ExecutionError(format!("JSON serialization failed: {}", e))),
+                }
+            }
+            _ => Err(JsonQueryError::ExecutionError(format!("Invalid output format: {}", format))),
+        }
+    }
+    
+    fn write_json_file(&self, file_path: &Path, data: &serde_json::Value, backup: bool) -> Result<(), JsonQueryError> {
+        if backup && file_path.exists() {
+            let backup_path = format!("{}.bak", file_path.display());
+            std::fs::copy(file_path, &backup_path)
+                .map_err(|e| JsonQueryError::IoError(format!("Failed to create backup: {}", e)))?;
+        }
+        
+        let json_str = serde_json::to_string_pretty(data)
+            .map_err(|e| JsonQueryError::ExecutionError(format!("JSON serialization failed: {}", e)))?;
+        
+        // Atomic write using temporary file
+        let temp_path = format!("{}.tmp", file_path.display());
+        std::fs::write(&temp_path, json_str)
+            .map_err(|e| JsonQueryError::IoError(format!("Failed to write temporary file: {}", e)))?;
+        
+        std::fs::rename(&temp_path, file_path)
+            .map_err(|e| JsonQueryError::IoError(format!("Failed to move temporary file: {}", e)))?;
+        
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StatefulTool for JsonQueryTool {
+    async fn call_with_context(
+        self,
+        context: &ToolContext,
+    ) -> Result<CallToolResult, CallToolError> {
+        // Get project root
+        let project_root = context.get_project_root()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &format!("Failed to get project root: {}", e))))?;
+        
+        // Validate and resolve file path
+        let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+        let file_path = project_root.join(&relative_path);
+        
+        // For read operations, check if file exists first
+        let canonical_path = if self.operation == "read" || (self.operation == "write" && file_path.exists()) {
+            // File must exist for read operations or write operations on existing files
+            if !file_path.exists() {
+                return Err(CallToolError::from(tool_errors::file_not_found("jq", &self.file_path)));
+            }
+            file_path.canonicalize()
+                .map_err(|_| CallToolError::from(tool_errors::file_not_found("jq", &self.file_path)))?
+        } else {
+            // For write operations on new files, canonicalize parent and reconstruct
+            if let Some(parent) = file_path.parent() {
+                let canonical_parent = parent.canonicalize()
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &format!("Failed to resolve parent directory: {}", e))))?;
+                
+                if let Some(file_name) = file_path.file_name() {
+                    canonical_parent.join(file_name)
+                } else {
+                    return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("Invalid file path: '{}'", self.file_path))));
+                }
+            } else {
+                return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("Invalid file path: '{}'", self.file_path))));
+            }
+        };
+        
+        // Read the JSON file
+        let mut data = self.read_json_file(&file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+        
+        let mut modified = false;
+        
+        // Execute the query
+        let result = match self.operation.as_str() {
+            "read" => {
+                // Track file as read
+                let read_files = context.get_custom_state::<HashSet<PathBuf>>().await
+                    .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+                let mut read_files_clone = (*read_files).clone();
+                read_files_clone.insert(canonical_path.clone());
+                context.set_custom_state(read_files_clone).await;
+                
+                self.execute_query(&data, &self.query).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?
+            }
+            "write" => {
+                // Check if file has been read
+                let read_files = context.get_custom_state::<HashSet<PathBuf>>().await
+                    .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+                
+                // Check if this is a new file (doesn't exist)
+                let is_new_file = !file_path.exists();
+                
+                if !is_new_file && !read_files.contains(&canonical_path) {
+                    return Err(CallToolError::from(tool_errors::operation_not_permitted(
+                        "jq", 
+                        &format!("File must be read before editing: {}", self.file_path)
+                    )));
+                }
+                
+                // For write operations, apply simple value assignments
+                if self.in_place {
+                    // Parse simple assignment queries like ".field = value"
+                    if let Some((path, value)) = self.parse_assignment(&self.query).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))? {
+                        self.apply_assignment(&mut data, &path, value).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+                        modified = true;
+                        
+                        // Write the modified data back to file
+                        self.write_json_file(&file_path, &data, self.backup).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+                        data.clone()
+                    } else {
+                        return Err(CallToolError::from(tool_errors::invalid_input("jq", 
+                            "Write operations currently only support simple assignments like '.field = value', '.nested.field = \"text\"', or '.config.debug = true'"
+                        )));
+                    }
+                } else {
+                    return Err(CallToolError::from(tool_errors::invalid_input("jq",
+                        "Write operations require in_place=true"
+                    )));
+                }
+            }
+            _ => return Err(CallToolError::from(tool_errors::invalid_input("jq", 
+                &format!("Invalid operation: {}. Must be 'read' or 'write'", self.operation)
+            ))),
+        };
+        
+        // Format the output
+        let output = self.format_output(&result, &self.output_format).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+        
+        // For write operations, return a summary of the operation
+        let content = if self.operation == "write" && modified {
+            serde_json::json!({
+                "modified": true,
+                "file": self.file_path,
+                "query": self.query
+            }).to_string()
+        } else {
+            // For read operations, just return the output
+            output
+        };
+        
+        Ok(CallToolResult {
+            content: vec![CallToolResultContentItem::text_content(
+                content,
+                None,
+            )],
+            is_error: Some(false),
+            meta: None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ToolContext;
+    use crate::protocol::{CallToolResultContentItem};
+    use serde_json::json;
+    use tempfile::TempDir;
+    use tokio::fs;
+
+    async fn setup_test_context() -> (ToolContext, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let canonical_path = temp_dir.path().canonicalize().unwrap();
+        let context = ToolContext::with_project_root(canonical_path);
+        (context, temp_dir)
+    }
+
+    async fn create_test_file(temp_dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
+        let file_path = temp_dir.path().join(name);
+        fs::write(&file_path, content).await.unwrap();
+        file_path
+    }
+    
+    async fn mark_file_as_read(context: &ToolContext, file_path: &std::path::Path) {
+        let canonical_path = file_path.canonicalize().unwrap();
+        let read_files = context.get_custom_state::<HashSet<PathBuf>>().await
+            .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+        let mut read_files_clone = (*read_files).clone();
+        read_files_clone.insert(canonical_path);
+        context.set_custom_state(read_files_clone).await;
+    }
+
+    fn extract_text_content(result: &crate::protocol::CallToolResult) -> &str {
+        match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_simple_field_read() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json", r#"{"name": "test", "value": 42}"#).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".name".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_nested_object_read() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json", 
+            r#"{"user": {"profile": {"name": "Alice", "age": 30}}}"#
+        ).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".user.profile.name".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "Alice");
+    }
+
+    #[tokio::test]
+    async fn test_array_index_read() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json",
+            r#"{"items": ["first", "second", "third"]}"#
+        ).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".items[1]".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "second");
+    }
+
+    #[tokio::test]
+    async fn test_complex_path_read() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        let content = json!({
+            "users": [
+                {
+                    "id": 1,
+                    "profile": {
+                        "name": "Alice",
+                        "preferences": {
+                            "theme": "dark"
+                        }
+                    },
+                    "roles": ["admin", "user", "moderator"]
+                }
+            ]
+        });
+        
+        create_test_file(&temp_dir, "test.json", &content.to_string()).await;
+        
+        // Test nested array + object path
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".users[0].roles[1]".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "user");
+        
+        // Test deeply nested path
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".users[0].profile.preferences.theme".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "dark");
+    }
+
+    #[tokio::test]
+    async fn test_simple_field_write() {
+        let (context, temp_dir) = setup_test_context().await;
+        let file_path = create_test_file(&temp_dir, "test.json", r#"{"name": "old"}"#).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".name = \"new\"".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["name"], "new");
+    }
+
+    #[tokio::test]
+    async fn test_unquoted_string_assignment() {
+        let (context, temp_dir) = setup_test_context().await;
+        let file_path = create_test_file(&temp_dir, "test.json", r#"{}"#).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".status = active".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["status"], "active");
+    }
+
+    #[tokio::test]
+    async fn test_boolean_and_number_assignment() {
+        let (context, temp_dir) = setup_test_context().await;
+        let file_path = create_test_file(&temp_dir, "test.json", r#"{}"#).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        // Test boolean
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".enabled = true".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        // Test number
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".count = 42".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["enabled"], true);
+        assert_eq!(data["count"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_complex_path_write() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        let content = json!({
+            "users": [
+                {
+                    "id": 1,
+                    "profile": {
+                        "email": "old@example.com"
+                    }
+                }
+            ]
+        });
+        
+        let file_path = create_test_file(&temp_dir, "test.json", &content.to_string()).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".users[0].profile.email = \"new@example.com\"".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["users"][0]["profile"]["email"], "new@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_array_element_assignment() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        let content = json!({
+            "items": ["a", "b", "c"]
+        });
+        
+        let file_path = create_test_file(&temp_dir, "test.json", &content.to_string()).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".items[1] = \"changed\"".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["items"][1], "changed");
+    }
+
+    #[tokio::test]
+    async fn test_out_of_bounds_read() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json", r#"{"items": [1, 2, 3]}"#).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".items[10]".to_string(),
+            operation: "read".to_string(),
+            output_format: "json".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "null");
+    }
+
+    #[tokio::test]
+    async fn test_invalid_query_error() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json", r#"{}"#).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: "invalid query".to_string(),
+            operation: "read".to_string(),
+            output_format: "json".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_backup_creation() {
+        let (context, temp_dir) = setup_test_context().await;
+        let file_path = create_test_file(&temp_dir, "test.json", r#"{"original": true}"#).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".modified = true".to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: true,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        // Check backup exists
+        let backup_path = temp_dir.path().join("test.json.bak");
+        assert!(backup_path.exists());
+        
+        let backup_content = fs::read_to_string(&backup_path).await.unwrap();
+        let backup_data: serde_json::Value = serde_json::from_str(&backup_content).unwrap();
+        assert_eq!(backup_data["original"], true);
+        assert!(backup_data.get("modified").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_output_formats() {
+        let (context, temp_dir) = setup_test_context().await;
+        
+        let content = json!({
+            "value": "test",
+            "nested": {"key": "value"}
+        });
+        
+        create_test_file(&temp_dir, "test.json", &content.to_string()).await;
+        
+        // Test raw format for string
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".value".to_string(),
+            operation: "read".to_string(),
+            output_format: "raw".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), "test");
+        
+        // Test compact format
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: ".nested".to_string(),
+            operation: "read".to_string(),
+            output_format: "compact".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let content = extract_text_content(&result);
+        assert_eq!(content.trim(), r#"{"key":"value"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_json_object_assignment() {
+        let (context, temp_dir) = setup_test_context().await;
+        let file_path = create_test_file(&temp_dir, "test.json", r#"{}"#).await;
+        mark_file_as_read(&context, &file_path).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "test.json".to_string(),
+            query: r#".config = {"host": "localhost", "port": 8080}"#.to_string(),
+            operation: "write".to_string(),
+            output_format: "json".to_string(),
+            in_place: true,
+            backup: false,
+        };
+        
+        tool.call_with_context(&context).await.unwrap();
+        
+        let file_path = temp_dir.path().join("test.json");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        let data: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(data["config"]["host"], "localhost");
+        assert_eq!(data["config"]["port"], 8080);
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_security() {
+        let (context, temp_dir) = setup_test_context().await;
+        create_test_file(&temp_dir, "test.json", r#"{}"#).await;
+        
+        let tool = JsonQueryTool {
+            file_path: "../../../etc/passwd".to_string(),
+            query: ".".to_string(),
+            operation: "read".to_string(),
+            output_format: "json".to_string(),
+            in_place: false,
+            backup: false,
+        };
+        
+        let result = tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        // The error might mention "Path escapes project directory" or similar
+        assert!(err_msg.to_lowercase().contains("path") || err_msg.to_lowercase().contains("directory"));
+    }
+}

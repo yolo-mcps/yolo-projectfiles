@@ -109,8 +109,14 @@ impl CoreHandler {
             ProtocolTools::WcTool(wc) => wc.call_with_context(&self.context).await,
             ProtocolTools::HashTool(hash) => hash.call_with_context(&self.context).await,
             
-            // Stateless file tools - call directly
+            // Process management tools
             ProtocolTools::ProcessTool(process) => process.call().await,
+            ProtocolTools::KillTool(kill) => kill.call_with_context(&self.context).await,
+            
+            // Structured data tools
+            ProtocolTools::JsonQueryTool(jq) => jq.call_with_context(&self.context).await,
+            ProtocolTools::YamlQueryTool(yq) => yq.call_with_context(&self.context).await,
+            ProtocolTools::TomlQueryTool(tomlq) => tomlq.call_with_context(&self.context).await,
         }.map_err(|e| {
             // Improve error message by adding tool context when the error message doesn't already include it
             let error_msg = e.to_string();

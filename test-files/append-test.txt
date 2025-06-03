@@ -1,5 +1,0 @@
-Initial content
-Line 2
-Line 3Line 4 - appended
-Line 5 - also appendedTest append at: 2025-01-06
-This line was appended using append mode

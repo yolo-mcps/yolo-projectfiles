@@ -1,5 +1,0 @@
-Line 1: Hi world
-Line 2: Hi regex
-Line 3: Goodbye world
-Line 4: Hello again
-Line 5: Final line

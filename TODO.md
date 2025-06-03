@@ -1,154 +1,91 @@
-# TODO.md - Project Task Status
+# TODO
 
-## 🎉 MAJOR MILESTONES COMPLETED
+## jq Tool Enhancement - Features for LLM/MCP Usage
 
-### ✅ MILESTONE 1: Test Infrastructure Refactoring
-**Achievement**: Successfully converted all 18 tools to StatefulTool pattern, eliminating race conditions and enabling full parallel test execution.
+### Phase 1: Essential Features (High Priority)
 
-### 🚀 MILESTONE 2: Comprehensive Test Coverage Expansion  
-**Achievement**: Massive expansion of test coverage from 42 to 186 tests (344% increase), ensuring reliability and robustness across all tools.
+#### 1. **Conditional Logic & Error Handling**
+- [ ] `if-then-else` conditionals - Essential for conditional transformations
+- [ ] `and`/`or`/`not` boolean operators - Required for complex filtering
+- [ ] `//` alternative operator (null coalescing) - Handle missing fields gracefully
+- [ ] `?` optional operator (`.field?`) - Prevent errors on missing paths
+- [ ] `try-catch` - Graceful error handling for robust queries
 
-**Combined Key Results**:
-- ✅ **18/18 tools** now use context-managed paths (100% complete)
-- ✅ **186 tests** run successfully in parallel (0 failures) - up from 42 tests
-- ✅ **344% test coverage increase** - comprehensive testing for all tools
-- ✅ **Zero race conditions** - eliminated all global state mutations
-- ✅ **All tools thoroughly tested** - functional, error, security, and edge case coverage
-- ✅ **Fast execution** - parallel tests complete in ~0.27s
-- ✅ **Clean builds** - no compilation errors or warnings (except unused utilities)
+#### 2. **Array Operations**
+- [ ] `add` - Sum array elements (common for aggregations)
+- [ ] `unique` - Remove duplicates from results
+- [ ] `sort`/`sort_by` - Order results for consistent output
+- [ ] Array slicing `.[1:3]`, `.[-2:]` - Extract array portions
+- [ ] `flatten` - Simplify nested array structures
+- [ ] `reverse` - Reverse array order
+- [ ] `first`/`last` - Quick array element access
 
----
+#### 3. **Object & Key Operations**
+- [ ] `has` - Check if key exists before accessing
+- [ ] `del` - Remove fields from objects
+- [ ] `with_entries` - Transform object key-value pairs
+- [ ] Assignment operators: `+=`, `|=` - Modify values in place
 
-## 🚀 MILESTONE 2: Comprehensive Test Coverage Expansion - ✅ FULLY COMPLETED
+#### 4. **Data Validation & Type Checking**
+- [ ] `empty` - Produce no output (useful for filtering)
+- [ ] `error` - Raise errors with messages
+- [ ] Type predicates: `isnumber`, `isstring`, `isarray`, `isobject`, `isboolean`
+- [ ] `paths`/`leaf_paths` - Enumerate all paths in structure
 
-### Achievement Summary
-**Massive expansion of test coverage from 42 to 186 tests (344% increase)**, ensuring comprehensive reliability and robustness across all MCP ProjectFiles tools.
+### Phase 2: Text Processing & Formatting (Medium Priority)
 
-### Test Coverage Statistics - ✅ COMPLETED
-- **Total Tests**: **186 tests** (up from initial 42 tests)
-- **Coverage Increase**: **344% improvement** in test coverage  
-- **100% Tool Coverage**: All 18+ tools now have comprehensive test suites
-- **All Tests Passing**: 186/186 tests ✅
-- **Test Categories**: Functional, error handling, security boundaries, edge cases, platform compatibility
+#### 5. **Advanced String Operations**
+- [ ] `test`/`match` - Regex pattern matching
+- [ ] `sub`/`gsub` - Find and replace with regex
+- [ ] String interpolation `"Value: \(.field)"` - Build formatted strings
+- [ ] `ltrimstr`/`rtrimstr` - Trim specific prefixes/suffixes
 
-### Tools with Comprehensive Test Coverage Added - ✅ ALL COMPLETED
+#### 6. **Output Formatting**
+- [ ] `@base64`/`@base64d` - Encode/decode base64
+- [ ] `@csv`/`@tsv` - Export to CSV/TSV format
+- [ ] `@uri` - URL encoding
+- [ ] `format` - Printf-style formatting
 
-#### High-Priority Core Tools (10 tools)
-- ✅ **write.rs** - 10 comprehensive tests (basic writing, append, backup, parent dirs, encodings, error cases)
-- ✅ **copy.rs** - 9 tests (file/directory copying, overwrite, metadata preservation, error cases)  
-- ✅ **delete.rs** - 10 tests (confirmation requirements, recursive deletion, pattern matching, safety)
-- ✅ **move_file.rs** - 9 tests (moving/renaming, overwrite, metadata, read tracking updates)
-- ✅ **mkdir.rs** - 8 tests (basic/nested creation, permissions, existing dirs, error cases)
-- ✅ **exists.rs** - 4 tests (file/directory existence, JSON output validation, boundaries)
-- ✅ **stat.rs** - 8 tests (file metadata, JSON output, permissions, timestamps, error cases)
-- ✅ **find.rs** - 9 tests (search patterns, filters, depth limits, type filtering, error cases)
-- ✅ **chmod.rs** - 7 tests (permissions, recursive, pattern matching, Unix-specific features)
-- ✅ **touch.rs** - 10 tests (file creation, timestamp updates, reference files, error cases)
+### Phase 3: Advanced Features (Lower Priority)
 
-#### Specialized Tools (5 tools)
-- ✅ **hash.rs** - 11 tests (all algorithms, different file sizes, error scenarios, security boundaries)
-- ✅ **tree.rs** - 11 tests (directory visualization, filtering, depth limits, pattern matching, error cases)
-- ✅ **wc.rs** - 14 tests (lines/words/chars/bytes counting, Unicode support, whitespace handling, error cases)
-- ✅ **file_type.rs** - 18 tests (text/binary detection, MIME types, encoding, BOM detection, magic bytes, error cases)
-- ✅ **diff.rs** - 16 tests (file comparison, unified diff format, context lines, whitespace handling, error cases)
+#### 7. **Aggregation & Transformation**
+- [ ] `group_by` - Group elements by criteria
+- [ ] `min`/`max`/`min_by`/`max_by` - Find extremes
+- [ ] `reduce` - Fold/accumulate operations
+- [ ] Variable binding `. as $x | ...` - Reuse values in complex queries
 
-### Test Quality Achievements - ✅ COMPLETED
-- **Functional Testing**: Core functionality for all tools
-- **Error Handling**: File not found, permissions, invalid inputs
-- **Security Boundaries**: Path traversal protection, project directory enforcement
-- **Edge Cases**: Empty files, large files, Unicode content, special characters
-- **Platform Compatibility**: Unix-specific features with proper guards
-- **Input Validation**: Parameter validation, encoding support, boundary testing
-- **Integration Testing**: Tool interactions, read tracking, context management
+#### 8. **Utility Functions**
+- [ ] `range` - Generate number sequences
+- [ ] `to_entries`/`from_entries` enhancements - Better object manipulation
+- [ ] `indices`/`index` - Find positions of elements
+- [ ] `any`/`all` - Boolean aggregations over arrays
 
----
+### Implementation Notes
 
-## Test Infrastructure Refactoring - Context-Managed Path Resolution - ✅ FULLY COMPLETED
+#### Why These Features Matter for LLM/MCP Usage:
 
-### Problem Statement ✅ SOLVED
-Previously, many tool tests changed the working directory using `std::env::set_current_dir()`, which caused:
-- Race conditions when tests run in parallel
-- Test failures when temp directories are cleaned up while still set as current directory
-- Inconsistent test behavior requiring `--test-threads=1` flag
-- Global state mutations that could affect other tests
+1. **Error Resilience**: Features like `?`, `//`, and `try-catch` prevent queries from failing on missing data, crucial when processing varied JSON structures.
 
-### Solution ✅ IMPLEMENTED
-Converted all tool implementations to use the `ToolContext::with_project_root()` pattern, which provides context-managed dependency injection for path resolution without changing the global working directory.
+2. **Data Extraction**: Array slicing, `has`, and conditional logic enable precise data extraction from complex nested structures.
 
-### Technical Implementation Summary ✅ COMPLETED
+3. **Data Transformation**: `if-then-else`, `with_entries`, and assignment operators allow in-place data modifications without full rewrites.
 
-**StatefulTool Pattern**: All 18 tools successfully converted from global state mutations to context-managed dependency injection.
+4. **Result Formatting**: String interpolation and format functions help create human-readable outputs or prepare data for other tools.
 
-**Parallel Testing**: All 186 tests run reliably in parallel with zero race conditions.
+5. **Validation**: Type checking functions enable data validation before processing, preventing downstream errors.
 
-**Architecture**: Clean separation between tool logic and execution context, enabling reliable testing and future extensibility.
+6. **Aggregation**: `add`, `group_by`, and `reduce` support common data analysis tasks.
 
-### Benefits ✅ ACHIEVED
-1. **Parallel Test Execution**: Tests can run concurrently, improving test suite performance
-2. **Isolation**: Each test is isolated from others, preventing interference
-3. **Reliability**: No more failures due to directory cleanup timing
-4. **Consistency**: All tools use the same context-managed approach
-5. **Maintainability**: Clearer test code without global state management
+### Testing Strategy
 
----
+- Create test files with diverse JSON structures (nested objects, arrays, mixed types)
+- Test error handling with missing fields and type mismatches
+- Verify performance with large datasets
+- Ensure compatibility with existing jq syntax where possible
 
-## Current System Status ✅ FULLY COMPLETED
+### Success Criteria
 
-### ✅ Production-Ready Components
-1. **All File Operations** - read, write, edit, copy, delete, move (StatefulTool ✓)
-2. **All Directory Operations** - list, grep (StatefulTool ✓)  
-3. **All Utility Tools** - chmod, find, mkdir, touch, diff, exists, file_type, stat (StatefulTool ✓)
-4. **All Specialized Tools** - hash, tree, wc (StatefulTool ✓)
-5. **Enhanced Output Formatting** - Standardized utility functions working
-6. **Error Handling** - Consistent "projectfiles:tool - message" format
-7. **Test Infrastructure** - All tools have comprehensive parallel-compatible tests
-8. **Build System** - All 186 tests passing in parallel, clean builds
-
-### System Quality Metrics ✅
-- **Test Infrastructure**: Fully refactored for parallel execution  
-- **Tool Architecture**: All tools use StatefulTool pattern
-- **Code Quality**: Clean builds with comprehensive test coverage
-- **Performance**: Fast parallel test execution (186 tests complete in ~0.27s)
-- **Reliability**: Zero race conditions, 100% test success rate
-- **Security**: All tools enforce project directory boundaries
-
----
-
-## Future Enhancement Opportunities
-
-### 1. Advanced Testing (Lower Priority)
-- [ ] Add performance benchmarking tests for large operations
-- [ ] Add cross-platform compatibility validation
-- [ ] Add stress testing with extremely large file sets
-- [ ] Add concurrent operation testing
-
-### 2. Tool Feature Enhancements
-- [ ] Add more advanced pattern matching capabilities
-- [ ] Implement recursive operations for more tools
-- [ ] Add progress indicators for long-running operations
-- [ ] Enhance diff output with more formatting options
-
-### 3. Developer Experience Improvements
-- [ ] Add tool usage examples in documentation
-- [ ] Create debugging utilities for tool development
-- [ ] Add logging/tracing for tool operations
-- [ ] Implement tool performance metrics
-
-### 4. Code Quality and Maintenance
-- [ ] Remove unused utility functions (format_duration, format_number)
-- [ ] Add more comprehensive error context
-- [ ] Implement tool-specific validation helpers
-- [ ] Add automated benchmarking CI
-
----
-
-## 🎯 Current Status: Ready for Production
-
-The MCP ProjectFiles system is now in a production-ready state with:
-- **Complete tool coverage** with StatefulTool pattern
-- **Comprehensive testing** (186 tests covering all scenarios)
-- **Zero race conditions** in parallel execution
-- **Robust error handling** and security boundaries
-- **Clean architecture** enabling future extensibility
-
-All major milestones have been achieved. The system is ready for production use and future enhancement work.
+- All implemented features should match standard jq behavior
+- Error messages should be clear and actionable
+- Performance should handle files up to 100MB efficiently
+- Documentation should include examples for each feature

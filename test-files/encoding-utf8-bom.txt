@@ -1,2 +1,0 @@
-UTF-8 with BOM test file
-Special chars: àáâãäå çñü
