@@ -99,6 +99,8 @@ The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI pa
   - "Error: projectfiles:edit - File not found /path/to/file"
 - All tool errors should be produced with thiserror Errors.
 - Always prefer jj over git for SCM operations and commits
+- When users ask to "carefully" make changes or express caution about editing, use the edit tool's dry_run flag to preview changes first
+- The edit tool's dry_run flag shows a diff without modifying files, allowing users to review changes before applying them
 
 ## Dogfooding
 

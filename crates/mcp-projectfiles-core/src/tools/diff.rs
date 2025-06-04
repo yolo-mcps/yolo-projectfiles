@@ -24,7 +24,7 @@ Parameters:
 - file2: Second file to compare (required)
 - context_lines: Lines of context around changes (optional, default: 3)
 - ignore_whitespace: Ignore trailing whitespace differences (optional, default: false)
-- follow_symlinks: Follow symlinks to compare files outside project (optional, default: true)
+- follow_symlinks: Follow symlinks to compare files outside project directory (optional, default: true). When false, symlinks cannot be accessed.
 
 Output format:
 - Unified diff format with file headers
@@ -784,7 +784,7 @@ mod tests {
         assert!(result.is_err());
         
         let error_msg = format!("{:?}", result.unwrap_err());
-        assert!(error_msg.contains("outside the project directory"));
+        assert!(error_msg.contains("Cannot access symlink"));
     }
     
     #[tokio::test]

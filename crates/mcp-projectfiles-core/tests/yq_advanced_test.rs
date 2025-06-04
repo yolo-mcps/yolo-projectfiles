@@ -7,7 +7,9 @@ use tokio::fs;
 
 async fn setup_test_context() -> (ToolContext, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
+    // Canonicalize the path to ensure consistency
+    let canonical_path = temp_dir.path().canonicalize().unwrap();
+    let context = ToolContext::with_project_root(canonical_path);
     (context, temp_dir)
 }
 

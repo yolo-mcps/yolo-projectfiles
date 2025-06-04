@@ -158,9 +158,9 @@ pub fn resolve_path_for_read(
         project_root.join(requested_path)
     };
 
-    // For symlink following, we first check if the path exists without canonicalizing
+    // For symlink following, we need to check if any component in the path is a symlink
     if follow_symlinks && absolute_path.exists() {
-        // If the path is a symlink and we want to follow it, resolve it
+        // Check if the path itself is a symlink
         if absolute_path.is_symlink() {
             match absolute_path.canonicalize() {
                 Ok(target_path) => {
@@ -174,10 +174,41 @@ pub fn resolve_path_for_read(
                     )));
                 }
             }
+        } else {
+            // Check if any parent directory in the path is a symlink
+            let mut current_path = PathBuf::new();
+            for component in absolute_path.components() {
+                current_path.push(component);
+                if current_path.is_symlink() {
+                    // Found a symlink in the path, canonicalize the full path
+                    match absolute_path.canonicalize() {
+                        Ok(target_path) => {
+                            // Allow reading through symlinked directories
+                            return Ok(target_path);
+                        }
+                        Err(_e) => {
+                            return Err(CallToolError::from(tool_errors::file_not_found(
+                                tool_name,
+                                path
+                            )));
+                        }
+                    }
+                }
+            }
         }
     }
 
     // For regular files or when not following symlinks, use standard validation
+    
+    // First check if the path is a symlink when follow_symlinks is false
+    if !follow_symlinks && absolute_path.is_symlink() {
+        return Err(CallToolError::from(crate::error::Error::symlink_access_denied(
+            "projectfiles",
+            tool_name,
+            path
+        )));
+    }
+    
     let canonical_path = absolute_path.canonicalize()
         .map_err(|_e| CallToolError::from(tool_errors::file_not_found(
             tool_name,
@@ -201,6 +232,83 @@ pub fn resolve_path_for_read(
     }
 
     Ok(canonical_path)
+}
+
+/// Resolve a path for operations that need to check symlinks without following them
+/// (like exists and stat tools). This allows checking if a symlink exists within
+/// the project directory without following it to its target.
+pub fn resolve_path_allowing_symlinks(
+    path: &str,
+    project_root: &Path,
+    tool_name: &str,
+) -> Result<PathBuf, CallToolError> {
+    let requested_path = Path::new(path);
+    let absolute_path = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        project_root.join(requested_path)
+    };
+
+    // For symlink checking, we need to validate the parent directory
+    if let Some(parent) = absolute_path.parent() {
+        // Check if parent exists and is within project
+        if parent.exists() {
+            let canonical_parent = parent.canonicalize()
+                .map_err(|_e| CallToolError::from(tool_errors::file_not_found(
+                    tool_name,
+                    path
+                )))?;
+            
+            let canonical_project_root = project_root.canonicalize()
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(
+                    tool_name,
+                    &format!("Failed to canonicalize project root: {}", e)
+                )))?;
+            
+            if !canonical_parent.starts_with(&canonical_project_root) {
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    tool_name,
+                    path,
+                    "Path is outside the project directory"
+                )));
+            }
+            
+            // Parent is valid, return the absolute path (which may be a symlink)
+            return Ok(absolute_path);
+        }
+    }
+    
+    // If parent doesn't exist or path has no parent, fall back to standard validation
+    // This handles cases like checking if "." exists
+    let canonical_project_root = project_root.canonicalize()
+        .map_err(|e| CallToolError::from(tool_errors::invalid_input(
+            tool_name,
+            &format!("Failed to canonicalize project root: {}", e)
+        )))?;
+    
+    // For paths that might not exist yet, we need manual normalization
+    let mut normalized = PathBuf::new();
+    for component in absolute_path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                normalized.push(component);
+            }
+        }
+    }
+    
+    if !normalized.starts_with(&canonical_project_root) {
+        return Err(CallToolError::from(tool_errors::access_denied(
+            tool_name,
+            path,
+            "Path is outside the project directory"
+        )));
+    }
+    
+    Ok(absolute_path)
 }
 
 #[cfg(test)]

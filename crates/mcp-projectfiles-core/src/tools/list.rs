@@ -28,7 +28,7 @@ Parameters:
 - show_hidden: Include hidden files starting with '.' (optional, default: false)
 - show_metadata: Include size/permissions/timestamps (optional, default: false)
 - filter: File name pattern, e.g., \"*.rs\", \"*.{js,ts}\", \"test_*\" (optional)
-- follow_symlinks: Follow symlinks to list outside project (optional, default: true)
+- follow_symlinks: Follow symlinks to list directories outside project (optional, default: true). When false, symlinks cannot be accessed.
 
 Output format:
 - Files shown as: [FILE] filename

@@ -44,6 +44,14 @@ pub enum Error {
         reason: String,
     },
 
+    /// Symlink access denied - cannot access symlink without following
+    #[error("{server}:{tool} - Cannot access symlink '{path}' without follow_symlinks=true")]
+    SymlinkAccessDenied {
+        server: String,
+        tool: String,
+        path: String,
+    },
+
     /// Invalid input parameters
     #[error("{server}:{tool} - {message}")]
     InvalidInput {
@@ -291,6 +299,17 @@ impl Error {
             actual: actual.into(),
         }
     }
+
+    /// Create a symlink access denied error
+    pub fn symlink_access_denied<S: Into<String>, T: Into<String>, P: Into<String>>(
+        server: S, tool: T, path: P
+    ) -> Self {
+        Self::SymlinkAccessDenied {
+            server: server.into(),
+            tool: tool.into(),
+            path: path.into(),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -303,7 +322,7 @@ impl From<Error> for rust_mcp_schema::schema_utils::CallToolError {
             Error::FileNotFound { .. } => {
                 std::io::Error::new(std::io::ErrorKind::NotFound, error.to_string())
             }
-            Error::AccessDenied { .. } => {
+            Error::AccessDenied { .. } | Error::SymlinkAccessDenied { .. } => {
                 std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
             }
             Error::InvalidInput { .. } => {

@@ -211,6 +211,23 @@ Parameters:
 - expected: Expected match count (optional, default: 1)
 - edits: Array of {old, new, expected} (optional, required for multi mode)
 - show_diff: Show changes made (optional, default: false)
+- dry_run: Preview changes without modifying file (optional, default: false)
+
+When to use show_diff:
+- Set to true when you want to review changes before they're applied
+- Useful for complex edits where you want visual confirmation
+- Helpful when making sensitive changes to configuration files
+- Recommended for first-time edits to unfamiliar code
+- Not needed for simple, straightforward replacements
+- Large diffs are truncated to first 100 lines for readability
+
+When to use dry_run:
+- Set to true when user asks to 'carefully' make changes
+- Use when editing critical configuration files
+- Recommended for complex multi-edit operations
+- Allows preview of all changes before committing
+- Returns diff output without modifying the file
+- After showing the dry run preview, ask the user if they would like to proceed with the actual changes
 "
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
@@ -236,6 +253,10 @@ pub struct EditTool {
     /// Show a diff of the changes made (default: false)
     #[serde(default)]
     pub show_diff: bool,
+    
+    /// Perform a dry run - show what would be changed without actually modifying the file (default: false)
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[async_trait]
@@ -392,8 +413,8 @@ impl StatefulTool for EditTool {
             ))
         })?;
 
-        // Capture original content for diff if requested
-        let original_content = if self.show_diff {
+        // Capture original content for diff if requested or dry run
+        let original_content = if self.show_diff || self.dry_run {
             Some(content.clone())
         } else {
             None
@@ -442,28 +463,30 @@ impl StatefulTool for EditTool {
             total_replacements += occurrence_count;
         }
 
-        // Write back to file
-        fs::write(&canonical_path, &content).await.map_err(|e| {
-            CallToolError::from(tool_errors::invalid_input(
-                TOOL_NAME,
-                &format!("Failed to write file: {}", e),
-            ))
-        })?;
+        // Write back to file (unless dry run)
+        if !self.dry_run {
+            fs::write(&canonical_path, &content).await.map_err(|e| {
+                CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Failed to write file: {}", e),
+                ))
+            })?;
 
-        // Track written files
-        let written_files = context
-            .get_custom_state::<HashSet<PathBuf>>()
-            .await
-            .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
-        let mut written_files_clone = (*written_files).clone();
-        written_files_clone.insert(canonical_path.clone());
-        context.set_custom_state(written_files_clone).await;
+            // Track written files
+            let written_files = context
+                .get_custom_state::<HashSet<PathBuf>>()
+                .await
+                .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+            let mut written_files_clone = (*written_files).clone();
+            written_files_clone.insert(canonical_path.clone());
+            context.set_custom_state(written_files_clone).await;
 
-        // If this was a new file, also add it to read files
-        if is_new_file {
-            let mut read_files_clone = (*read_files).clone();
-            read_files_clone.insert(canonical_path.clone());
-            context.set_custom_state(read_files_clone).await;
+            // If this was a new file, also add it to read files
+            if is_new_file {
+                let mut read_files_clone = (*read_files).clone();
+                read_files_clone.insert(canonical_path.clone());
+                context.set_custom_state(read_files_clone).await;
+            }
         }
 
         // Format path relative to project root
@@ -471,24 +494,42 @@ impl StatefulTool for EditTool {
             .strip_prefix(&project_root)
             .unwrap_or(&canonical_path);
 
-        let mut message = if edits.len() == 1 {
-            format!(
-                "Edited file {} ({} at line {})",
-                format_path(relative_path),
-                format_count(total_replacements as usize, "change", "changes"),
-                first_edit_line.map_or("unknown".to_string(), |line| line.to_string())
-            )
+        let mut message = if self.dry_run {
+            if edits.len() == 1 {
+                format!(
+                    "[DRY RUN] Would edit file {} ({} at line {})",
+                    format_path(relative_path),
+                    format_count(total_replacements as usize, "change", "changes"),
+                    first_edit_line.map_or("unknown".to_string(), |line| line.to_string())
+                )
+            } else {
+                format!(
+                    "[DRY RUN] Would edit file {} ({} in {} edits)",
+                    format_path(relative_path),
+                    format_count(total_replacements as usize, "change", "changes"),
+                    edits.len()
+                )
+            }
         } else {
-            format!(
-                "Edited file {} ({} in {} edits)",
-                format_path(relative_path),
-                format_count(total_replacements as usize, "change", "changes"),
-                edits.len()
-            )
+            if edits.len() == 1 {
+                format!(
+                    "Edited file {} ({} at line {})",
+                    format_path(relative_path),
+                    format_count(total_replacements as usize, "change", "changes"),
+                    first_edit_line.map_or("unknown".to_string(), |line| line.to_string())
+                )
+            } else {
+                format!(
+                    "Edited file {} ({} in {} edits)",
+                    format_path(relative_path),
+                    format_count(total_replacements as usize, "change", "changes"),
+                    edits.len()
+                )
+            }
         };
 
-        // Generate colored diff if requested
-        if self.show_diff {
+        // Generate colored diff if requested or dry run
+        if self.show_diff || self.dry_run {
             if let Some(original) = original_content {
                 message.push_str("\n\n");
 
@@ -516,6 +557,12 @@ impl StatefulTool for EditTool {
                     ));
                 }
             }
+        }
+        
+        // Add note for dry run
+        if self.dry_run {
+            message.push_str("\n\n");
+            message.push_str("No changes were made to the file (dry run mode).");
         }
 
         Ok(CallToolResult {
@@ -587,6 +634,7 @@ mod tests {
                 expected: 1,
             }]),
             show_diff: false,
+            dry_run: false,
         };
 
         let result = tool.call_with_context(&context).await;
@@ -617,6 +665,7 @@ mod tests {
             expected: Some(1),
             edits: None,
             show_diff: false,
+            dry_run: false,
         };
 
         let result = tool.call_with_context(&context).await.unwrap();
@@ -657,6 +706,7 @@ mod tests {
                 },
             ]),
             show_diff: false,
+            dry_run: false,
         };
 
         let result = tool.call_with_context(&context).await.unwrap();
@@ -685,6 +735,7 @@ mod tests {
             expected: Some(1),
             edits: None,
             show_diff: true,
+            dry_run: false,
         };
 
         let result = tool.call_with_context(&context).await.unwrap();
@@ -714,6 +765,7 @@ mod tests {
             expected: Some(1),
             edits: None,
             show_diff: false,
+            dry_run: false,
         };
 
         let result = tool.call_with_context(&context).await;
@@ -725,5 +777,90 @@ mod tests {
             "Expected 'File must be read before editing' but got: {}",
             error_msg
         );
+    }
+
+    #[tokio::test]
+    async fn test_dry_run_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
+        let file_path = temp_dir.path().join("test.txt");
+        
+        // Setup test file
+        setup_test_file_with_read(&context, "test.txt", "Hello world").await;
+        
+        // Perform dry run edit
+        let tool = EditTool {
+            path: "test.txt".to_string(),
+            old: Some("world".to_string()),
+            new: Some("Rust".to_string()),
+            expected: Some(1),
+            edits: None,
+            show_diff: false,
+            dry_run: true,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let message = extract_text_content(&result);
+        
+        // Check dry run indicators
+        assert!(message.contains("[DRY RUN]"));
+        assert!(message.contains("Would edit file"));
+        assert!(message.contains("No changes were made to the file"));
+        
+        // Verify diff is shown
+        assert!(message.contains("--- test.txt"));
+        assert!(message.contains("+++ test.txt"));
+        assert!(message.contains("-Hello world"));
+        assert!(message.contains("+Hello Rust"));
+        
+        // Verify file was NOT modified
+        let content = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "Hello world");
+    }
+
+    #[tokio::test]
+    async fn test_dry_run_multi_edit() {
+        let temp_dir = TempDir::new().unwrap();
+        
+        let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
+        let file_path = temp_dir.path().join("test.txt");
+        
+        // Setup test file
+        setup_test_file_with_read(&context, "test.txt", "foo bar foo baz").await;
+        
+        // Perform dry run with multiple edits
+        let tool = EditTool {
+            path: "test.txt".to_string(),
+            old: None,
+            new: None,
+            expected: None,
+            edits: Some(vec![
+                EditOperation {
+                    old: "foo".to_string(),
+                    new: "FOO".to_string(),
+                    expected: 2,
+                },
+                EditOperation {
+                    old: "bar".to_string(),
+                    new: "BAR".to_string(),
+                    expected: 1,
+                },
+            ]),
+            show_diff: false,
+            dry_run: true,
+        };
+        
+        let result = tool.call_with_context(&context).await.unwrap();
+        let message = extract_text_content(&result);
+        
+        // Check dry run indicators
+        assert!(message.contains("[DRY RUN]"));
+        assert!(message.contains("Would edit file"));
+        assert!(message.contains("3 changes in 2 edits")); // 2 foo replacements + 1 bar replacement = 3 total
+        
+        // Verify file was NOT modified
+        let content = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "foo bar foo baz");
     }
 }

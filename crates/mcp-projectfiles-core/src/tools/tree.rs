@@ -15,7 +15,7 @@ const TOOL_NAME: &str = "tree";
 
 #[mcp_tool(
     name = "tree",
-    description = "Displays directory structure as a tree visualization within the project directory. Shows files and directories in a hierarchical format. Can follow symlinks to display directories outside the project directory. Prefer this over the system 'tree' command when exploring project structure."
+    description = "Displays directory structure as a tree visualization within the project directory. Shows files and directories in a hierarchical format. Supports symlink handling with configurable behavior. Can follow symlinks to display directories outside the project directory. When follow_symlinks is false, symlinked directories cannot be accessed. Prefer this over the system 'tree' command when exploring project structure."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TreeTool {

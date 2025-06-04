@@ -1,6 +1,6 @@
 use crate::config::tool_errors;
 use crate::context::{StatefulTool, ToolContext};
-use crate::tools::utils::resolve_path_for_read;
+use crate::tools::utils::{resolve_path_for_read, resolve_path_allowing_symlinks};
 
 use async_trait::async_trait;
 use rust_mcp_schema::{
@@ -8,7 +8,7 @@ use rust_mcp_schema::{
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+
 
 const TOOL_NAME: &str = "exists";
 
@@ -67,10 +67,10 @@ impl StatefulTool for ExistsTool {
             ))
         })?;
 
-        // Use the utility function to resolve path with symlink support
-        let resolved_path =
-            match resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)
-            {
+        // Use different path resolution based on follow_symlinks
+        let resolved_path = if self.follow_symlinks {
+            // When following symlinks, use the standard resolution
+            match resolve_path_for_read(&self.path, &project_root, true, TOOL_NAME) {
                 Ok(path) => path,
                 Err(e) => {
                     // If the path doesn't exist, we still want to provide a result instead of erroring
@@ -79,52 +79,17 @@ impl StatefulTool for ExistsTool {
                         || e.to_string().contains("does not exist")
                     {
                         // For non-existent paths, try to get the normalized path
-                        let requested_path = Path::new(&self.path);
-                        let absolute_path = if requested_path.is_absolute() {
-                            requested_path.to_path_buf()
-                        } else {
-                            project_root.join(requested_path)
-                        };
-
-                        // Check if path would be within project bounds
-                        if !self.follow_symlinks {
-                            let canonical_project_root =
-                                project_root.canonicalize().map_err(|e| {
-                                    CallToolError::from(tool_errors::invalid_input(
-                                        TOOL_NAME,
-                                        &format!("Failed to canonicalize project root: {}", e),
-                                    ))
-                                })?;
-
-                            // Normalize the path manually for validation
-                            let mut normalized = PathBuf::new();
-                            for component in absolute_path.components() {
-                                match component {
-                                    std::path::Component::ParentDir => {
-                                        normalized.pop();
-                                    }
-                                    std::path::Component::CurDir => {}
-                                    _ => {
-                                        normalized.push(component);
-                                    }
-                                }
-                            }
-
-                            if !normalized.starts_with(&canonical_project_root) {
-                                return Err(CallToolError::from(tool_errors::access_denied(
-                                    TOOL_NAME,
-                                    &self.path,
-                                    "Path is outside the project directory",
-                                )));
-                            }
-                        }
-                        absolute_path
+                        resolve_path_allowing_symlinks(&self.path, &project_root, TOOL_NAME)?
                     } else {
                         // For other errors (like access denied), propagate them
                         return Err(e);
                     }
                 }
-            };
+            }
+        } else {
+            // When not following symlinks, use the new function that allows checking symlinks
+            resolve_path_allowing_symlinks(&self.path, &project_root, TOOL_NAME)?
+        };
 
         let exists = resolved_path.exists();
 

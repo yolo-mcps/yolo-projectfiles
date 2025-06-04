@@ -1,6 +1,6 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
-use crate::tools::utils::resolve_path_for_read;
+use crate::tools::utils::{resolve_path_for_read, resolve_path_allowing_symlinks};
 use async_trait::async_trait;
 
 use rust_mcp_schema::{
@@ -19,7 +19,7 @@ fn default_follow_symlinks() -> bool {
 
 #[mcp_tool(
     name = "stat",
-    description = "Gets detailed file or directory metadata (size, permissions, timestamps) within the project directory. Can follow symlinks to get metadata of files outside the project directory. Replaces the need for 'ls -la' or 'stat' commands."
+    description = "Gets detailed file or directory metadata (size, permissions, timestamps) within the project directory. Supports symlink handling with configurable behavior. Can follow symlinks to get metadata of files outside the project directory. When follow_symlinks is false, returns metadata of the symlink itself rather than its target. Replaces the need for 'ls -la' or 'stat' commands."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct StatTool {
@@ -40,20 +40,31 @@ impl StatefulTool for StatTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
         
-        // Use the utility function to resolve path with symlink support
-        let canonical_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
+        // Use different path resolution based on follow_symlinks
+        let resolved_path = if self.follow_symlinks {
+            resolve_path_for_read(&self.path, &project_root, true, TOOL_NAME)?
+        } else {
+            // When not following symlinks, use the function that allows checking symlinks
+            resolve_path_allowing_symlinks(&self.path, &project_root, TOOL_NAME)?
+        };
         
         // Get metadata
         let metadata = if self.follow_symlinks {
-            fs::metadata(&canonical_path).await
+            fs::metadata(&resolved_path).await
         } else {
-            fs::symlink_metadata(&canonical_path).await
-        }.map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata for '{}': {}", self.path, e))))?;
+            fs::symlink_metadata(&resolved_path).await
+        }.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                CallToolError::from(tool_errors::file_not_found(TOOL_NAME, &self.path))
+            } else {
+                CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get metadata for '{}': {}", self.path, e)))
+            }
+        })?;
         
         // Build the result
         let mut result = serde_json::json!({
             "path": self.path,
-            "absolute_path": canonical_path.display().to_string(),
+            "absolute_path": resolved_path.display().to_string(),
             "exists": true,
             "type": get_file_type(&metadata),
             "size": metadata.len(),

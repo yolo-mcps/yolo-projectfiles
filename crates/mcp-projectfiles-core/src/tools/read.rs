@@ -44,7 +44,7 @@ Features:
 - Pattern filtering with regex
 - Tail mode for reading from end
 - Binary file detection
-- Symlink support
+- Symlink support with configurable behavior
 
 Parameters:
 - path: File path (required)
@@ -55,7 +55,7 @@ Parameters:
 - pattern: Regex to filter lines
 - case: For pattern matching (\"sensitive\" or \"insensitive\", default: \"sensitive\")
 - encoding: Text encoding (default: \"utf-8\")
-- follow_symlinks: Follow symlinks (default: true)
+- follow_symlinks: Follow symlinks to read files outside project directory (default: true). When false, symlinks cannot be accessed.
 
 NOTE: Omit optional parameters when not needed, don't pass null.
 HINT: Use linenumbers:false when reading files you plan to edit.")]
@@ -904,6 +904,51 @@ mod tests {
         let result = test_read_tool_in_dir(&temp_dir, tool).await;
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("outside the project directory"));
+        assert!(result.unwrap_err().to_string().contains("Cannot access symlink"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_in_symlinked_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let external_dir = TempDir::new().unwrap();
+        
+        // Create a directory with files outside project
+        let external_subdir = external_dir.path().join("subdir");
+        async_fs::create_dir(&external_subdir).await.unwrap();
+        let external_file = external_subdir.join("file.txt");
+        async_fs::write(&external_file, "Content in symlinked dir").await.unwrap();
+        
+        // Create symlink to the external directory
+        let symlink_path = temp_dir.path().join("linked_dir");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&external_subdir, &symlink_path).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(&external_subdir, &symlink_path).unwrap();
+        }
+        
+        // Should be able to read file within symlinked directory when follow_symlinks=true
+        let mut tool = create_read_tool("linked_dir/file.txt");
+        tool.follow_symlinks = true;
+        let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
+        
+        let output = match &result.content[0] {
+            CallToolResultContentItem::TextContent(text) => &text.text,
+            _ => panic!("Expected text content"),
+        };
+        
+        assert!(output.contains("Content in symlinked dir"));
+        
+        // Should not be able to read when follow_symlinks=false
+        let mut tool = create_read_tool("linked_dir/file.txt");
+        tool.follow_symlinks = false;
+        let result = test_read_tool_in_dir(&temp_dir, tool).await;
+        
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        // The error might be about the symlinked directory or about the path being outside
+        assert!(error_msg.contains("Cannot access symlink") || error_msg.contains("outside the project directory"));
     }
 }

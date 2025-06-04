@@ -33,7 +33,7 @@ Parameters:
 - context_before: Lines of context before match (optional, default: 0)
 - context_after: Lines of context after match (optional, default: 0)
 - max_results: Maximum results to return, 0 = unlimited (optional, default: 100)
-- follow_search_path: Follow symlinks (optional, default: true)
+- follow_search_path: Follow symlinks in the search directory path to search outside project (optional, default: true). When false, symlinked directories cannot be searched.
 - invert_match: Show lines NOT matching pattern (optional, default: false)
 
 Binary files are automatically skipped.

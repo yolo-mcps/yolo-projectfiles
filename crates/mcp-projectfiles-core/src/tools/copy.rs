@@ -72,39 +72,87 @@ impl StatefulTool for CopyTool {
         let source_path = Path::new(&self.source);
         let dest_path = Path::new(&self.destination);
         
-        // Ensure paths are within project root
-        let canonical_source = if source_path.is_absolute() {
+        // Build absolute paths
+        let absolute_source = if source_path.is_absolute() {
             source_path.to_path_buf()
         } else {
             project_root.join(source_path)
         };
         
-        let canonical_dest = if dest_path.is_absolute() {
+        let absolute_dest = if dest_path.is_absolute() {
             dest_path.to_path_buf()
         } else {
             project_root.join(dest_path)
         };
         
         // Validate source exists
-        if !canonical_source.exists() {
+        if !absolute_source.exists() {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
                 &format!("Source path '{}' does not exist", self.source)
             )));
         }
         
+        // Canonicalize source path to resolve symlinks
+        let canonical_source = absolute_source.canonicalize()
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve source path: {}", e))))?;
+        
         // Ensure source is within project root
         if !canonical_source.starts_with(&project_root) {
-            return Err(CallToolError::from(tool_errors::invalid_input(
+            return Err(CallToolError::from(tool_errors::access_denied(
                 TOOL_NAME,
+                &self.source,
                 "Source path is outside the project directory"
             )));
         }
         
-        // Ensure destination would be within project root
+        // For destination, canonicalize parent directory to prevent writing through symlinks
+        let canonical_dest = if absolute_dest.exists() {
+            // If destination exists, canonicalize it
+            absolute_dest.canonicalize()
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination path: {}", e))))?
+        } else {
+            // For new destinations, canonicalize the parent directory
+            if let Some(parent) = absolute_dest.parent() {
+                if parent.exists() {
+                    let canonical_parent = parent.canonicalize()
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve parent directory: {}", e))))?;
+                    
+                    // Ensure the parent is within the project directory
+                    if !canonical_parent.starts_with(&project_root) {
+                        return Err(CallToolError::from(tool_errors::access_denied(
+                            TOOL_NAME,
+                            &self.destination,
+                            "Destination path would be outside the project directory"
+                        )));
+                    }
+                    
+                    // Reconstruct the path with the canonical parent
+                    if let Some(file_name) = absolute_dest.file_name() {
+                        canonical_parent.join(file_name)
+                    } else {
+                        return Err(CallToolError::from(tool_errors::invalid_input(
+                            TOOL_NAME,
+                            &format!("Invalid destination path: '{}'", self.destination)
+                        )));
+                    }
+                } else {
+                    // Parent doesn't exist yet, will be created, but check the path
+                    absolute_dest.clone()
+                }
+            } else {
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Invalid destination path: '{}'", self.destination)
+                )));
+            }
+        };
+        
+        // Final check: ensure canonicalized destination is within project root
         if !canonical_dest.starts_with(&project_root) {
-            return Err(CallToolError::from(tool_errors::invalid_input(
+            return Err(CallToolError::from(tool_errors::access_denied(
                 TOOL_NAME,
+                &self.destination,
                 "Destination path is outside the project directory"
             )));
         }
@@ -127,13 +175,7 @@ impl StatefulTool for CopyTool {
             }
         }
         
-        // Additional validation for absolute paths
-        if dest_path.is_absolute() && !canonical_dest.starts_with(&project_root) {
-            return Err(CallToolError::from(tool_errors::invalid_input(
-                TOOL_NAME,
-                "Destination path is outside the project directory"
-            )));
-        }
+
         
         // Check if destination exists
         if canonical_dest.exists() && !self.overwrite {

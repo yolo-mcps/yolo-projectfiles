@@ -25,7 +25,7 @@ NOTE: Omit optional parameters when not needed, don't pass null.
 
 Parameters:
 - path: File to analyze (required)
-- follow_symlinks: Follow symlinks outside project (optional, default: true)
+- follow_symlinks: Follow symlinks to analyze files outside project directory (optional, default: true). When false, symlinks cannot be analyzed.
 
 Features:
 - Text vs binary detection based on content analysis
@@ -1019,7 +1019,7 @@ mod tests {
         let error = result.unwrap_err();
         let error_str = error.to_string();
         assert!(error_str.contains("projectfiles:file"));
-        assert!(error_str.contains("outside the project directory"));
+        assert!(error_str.contains("Cannot access symlink"));
     }
 
     #[cfg(unix)]

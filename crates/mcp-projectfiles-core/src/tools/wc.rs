@@ -13,7 +13,7 @@ const TOOL_NAME: &str = "wc";
 
 #[mcp_tool(
     name = "wc",
-    description = "Counts lines, words, characters, and bytes in text files within the project directory. Can follow symlinks to count files outside the project directory. Prefer this over the Unix 'wc' command when analyzing project files."
+    description = "Counts lines, words, characters, and bytes in text files within the project directory. Supports symlink handling with configurable behavior. Can follow symlinks to count files outside the project directory. When follow_symlinks is false, symlinked files cannot be accessed. Prefer this over the Unix 'wc' command when analyzing project files."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WcTool {
@@ -684,7 +684,7 @@ mod tests {
         let error = result.unwrap_err();
         let error_str = error.to_string();
         assert!(error_str.contains("projectfiles:wc"));
-        assert!(error_str.contains("outside the project directory"));
+        assert!(error_str.contains("Cannot access symlink"));
     }
 
     #[cfg(unix)]

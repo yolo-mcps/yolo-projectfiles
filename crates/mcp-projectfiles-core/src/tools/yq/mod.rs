@@ -34,9 +34,6 @@ pub enum YamlQueryError {
     
     #[error("Error: projectfiles:yq - IO error: {0}")]
     IoError(String),
-    
-    #[error("Error: projectfiles:yq - Path outside project directory: {0}")]
-    PathOutsideProject(String),
 }
 
 #[mcp_tool(name = "yq", description = "Query and manipulate YAML files using jq-style syntax. Preferred tool for YAML manipulation in projects.
@@ -96,6 +93,8 @@ YAML-Specific Features:
 
 Safety:
 - Restricted to project directory only
+- Supports symlink handling with follow_symlinks parameter (default: true)
+- When follow_symlinks is false, symlinked YAML files cannot be accessed
 - Optional backups for write operations (backup: true)
 - Atomic writes prevent corruption")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
@@ -145,24 +144,7 @@ pub struct YamlQueryResult {
 }
 
 impl YamlQueryTool {
-    fn validate_path(&self, file_path: &str) -> Result<std::path::PathBuf, YamlQueryError> {
-        let path = Path::new(file_path);
-        
-        // Ensure path is relative and doesn't escape project directory
-        if path.is_absolute() {
-            return Err(YamlQueryError::PathOutsideProject(file_path.to_string()));
-        }
-        
-        // Check for path traversal attempts
-        for component in path.components() {
-            if let std::path::Component::ParentDir = component {
-                return Err(YamlQueryError::PathOutsideProject(file_path.to_string()));
-            }
-        }
-        
-        Ok(path.to_path_buf())
-    }
-    
+
     fn read_yaml_file(&self, file_path: &Path) -> Result<serde_json::Value, YamlQueryError> {
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| {
@@ -250,27 +232,72 @@ impl StatefulTool for YamlQueryTool {
             resolve_path_for_read(&self.file_path, &project_root, self.follow_symlinks, "yq")
                 .map_err(|e| CallToolError::from(e))?
         } else {
-            // For write operations, use the old validation to restrict to project directory
-            let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("yq", &e.to_string())))?;
-            let file_path = project_root.join(&relative_path);
-            
-            // For write operations, check if file exists first
-            if file_path.exists() {
-                file_path.canonicalize()
-                    .map_err(|_| CallToolError::from(tool_errors::file_not_found("yq", &self.file_path)))?
+            // For write operations, ensure we don't write through symlinks
+            let requested_path = Path::new(&self.file_path);
+            let absolute_path = if requested_path.is_absolute() {
+                requested_path.to_path_buf()
             } else {
-                // For write operations on new files, canonicalize parent and reconstruct
-                if let Some(parent) = file_path.parent() {
-                    let canonical_parent = parent.canonicalize()
-                        .map_err(|e| CallToolError::from(tool_errors::invalid_input("yq", &format!("Failed to resolve parent directory: {}", e))))?;
-                    
-                    if let Some(file_name) = file_path.file_name() {
-                        canonical_parent.join(file_name)
+                project_root.join(requested_path)
+            };
+            
+            // For existing files, canonicalize the path to resolve all symlinks
+            // For new files, canonicalize the parent directory and ensure the full path is within bounds
+            if absolute_path.exists() {
+                let canonical = absolute_path.canonicalize()
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input("yq", &format!("Failed to resolve path '{}': {}", self.file_path, e))))?;
+                
+                // Ensure the canonicalized path is within the project directory
+                if !canonical.starts_with(&project_root) {
+                    return Err(CallToolError::from(tool_errors::access_denied(
+                        "yq",
+                        &self.file_path,
+                        "Path is outside the project directory"
+                    )));
+                }
+                
+                canonical
+            } else {
+                // For new files, canonicalize the parent directory
+                if let Some(parent) = absolute_path.parent() {
+                    if parent.exists() {
+                        let canonical_parent = parent.canonicalize()
+                            .map_err(|e| CallToolError::from(tool_errors::invalid_input("yq", &format!("Failed to resolve parent directory: {}", e))))?;
+                        
+                        // Ensure the parent is within the project directory
+                        if !canonical_parent.starts_with(&project_root) {
+                            return Err(CallToolError::from(tool_errors::access_denied(
+                                "yq",
+                                &self.file_path,
+                                "Path would be outside the project directory"
+                            )));
+                        }
+                        
+                        // Reconstruct the path with the canonical parent
+                        if let Some(file_name) = absolute_path.file_name() {
+                            canonical_parent.join(file_name)
+                        } else {
+                            return Err(CallToolError::from(tool_errors::invalid_input(
+                                "yq",
+                                &format!("Invalid file path: '{}'", self.file_path)
+                            )));
+                        }
                     } else {
-                        return Err(CallToolError::from(tool_errors::invalid_input("yq", &format!("Invalid file path: '{}'", self.file_path))));
+                        // Parent doesn't exist yet, check path components
+                        // Make sure the path would be within project bounds when created
+                        if !absolute_path.starts_with(&project_root) {
+                            return Err(CallToolError::from(tool_errors::access_denied(
+                                "yq",
+                                &self.file_path,
+                                "Path would be outside the project directory"
+                            )));
+                        }
+                        absolute_path
                     }
                 } else {
-                    return Err(CallToolError::from(tool_errors::invalid_input("yq", &format!("Invalid file path: '{}'", self.file_path))));
+                    return Err(CallToolError::from(tool_errors::invalid_input(
+                        "yq",
+                        &format!("Invalid file path: '{}'", self.file_path)
+                    )));
                 }
             }
         };

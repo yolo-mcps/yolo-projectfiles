@@ -13,7 +13,7 @@ use rust_mcp_schema::{
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use thiserror::Error;
 
 pub use executor::JsonQueryExecutor;
@@ -34,9 +34,6 @@ pub enum JsonQueryError {
     
     #[error("Error: projectfiles:jq - IO error: {0}")]
     IoError(String),
-    
-    #[error("Error: projectfiles:jq - Path outside project directory: {0}")]
-    PathOutsideProject(String),
 }
 
 #[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax. Preferred tool for JSON manipulation in projects.
@@ -90,6 +87,8 @@ Output Formats:
 
 Safety:
 - Restricted to project directory only
+- Supports symlink handling with follow_symlinks parameter (default: true)
+- When follow_symlinks is false, symlinked JSON files cannot be accessed
 - Optional backups for write operations (backup: true)
 - Atomic writes prevent corruption")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
@@ -137,24 +136,7 @@ pub struct JsonQueryResult {
 }
 
 impl JsonQueryTool {
-    fn validate_path(&self, file_path: &str) -> Result<PathBuf, JsonQueryError> {
-        let path = Path::new(file_path);
-        
-        // Ensure path is relative and doesn't escape project directory
-        if path.is_absolute() {
-            return Err(JsonQueryError::PathOutsideProject(file_path.to_string()));
-        }
-        
-        // Check for path traversal attempts
-        for component in path.components() {
-            if let std::path::Component::ParentDir = component {
-                return Err(JsonQueryError::PathOutsideProject(file_path.to_string()));
-            }
-        }
-        
-        Ok(path.to_path_buf())
-    }
-    
+
     fn read_json_file(&self, file_path: &Path) -> Result<serde_json::Value, JsonQueryError> {
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| {
@@ -222,16 +204,33 @@ impl StatefulTool for JsonQueryTool {
             resolve_path_for_read(&self.file_path, &project_root, self.follow_symlinks, "jq")
                 .map_err(|e| CallToolError::from(e))?
         } else {
-            // For write operations, use the old validation to restrict to project directory
-            let relative_path = self.validate_path(&self.file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
-            let file_path = project_root.join(&relative_path);
+            // For write operations, ensure we don't write through symlinks
+            let requested_path = Path::new(&self.file_path);
+            let absolute_path = if requested_path.is_absolute() {
+                requested_path.to_path_buf()
+            } else {
+                project_root.join(requested_path)
+            };
             
             // Check if file exists for write operations
-            if !file_path.exists() {
-                return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("File not found: {}", relative_path.display()))));
+            if !absolute_path.exists() {
+                return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("File not found: {}", self.file_path))));
             }
             
-            file_path
+            // Canonicalize the path to resolve all symlinks
+            let canonical = absolute_path.canonicalize()
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &format!("Failed to resolve path '{}': {}", self.file_path, e))))?;
+            
+            // Ensure the canonicalized path is within the project directory
+            if !canonical.starts_with(&project_root) {
+                return Err(CallToolError::from(tool_errors::access_denied(
+                    "jq",
+                    &self.file_path,
+                    "Path is outside the project directory"
+                )));
+            }
+            
+            canonical
         };
         
         // Read JSON file

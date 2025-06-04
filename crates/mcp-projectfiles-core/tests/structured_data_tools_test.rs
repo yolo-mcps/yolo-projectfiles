@@ -20,7 +20,9 @@ fn setup_test_env() -> (TempDir, ToolContext) {
     let temp_dir = TempDir::new().unwrap();
     
     // Create context with project root override
-    let context = ToolContext::with_project_root(temp_dir.path().to_path_buf());
+    // Canonicalize the path to ensure consistency
+    let canonical_path = temp_dir.path().canonicalize().unwrap();
+    let context = ToolContext::with_project_root(canonical_path);
     
     (temp_dir, context)
 }
@@ -173,7 +175,7 @@ async fn test_jq_tool_write_operations() {
     // Test write operation without quotes
     let tool = JsonQueryTool {
         file_path: "write_test.json".to_string(),
-        query: ".description = hello world".to_string(),
+        query: ".description = \"hello world\"".to_string(),
         operation: "write".to_string(),
         output_format: "json".to_string(),
         in_place: true,

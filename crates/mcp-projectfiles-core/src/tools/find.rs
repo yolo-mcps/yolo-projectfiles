@@ -30,8 +30,8 @@ Parameters:
 - size_filter: \"+1M\" (>1MB), \"-100K\" (<100KB), \"50K\" (exactly 50KB) (optional)
 - date_filter: \"-7d\" (last 7 days), \"+30d\" (>30 days ago), \"-1h\" (last hour) (optional)
 - max_depth: Maximum directory depth to search (optional, unlimited by default)
-- follow_symlinks: Follow symlinks during traversal (optional, default: false)
-- follow_search_path: Follow symlinks for start directory (optional, default: true)
+- follow_symlinks: Follow symlinks during directory traversal to search outside project (optional, default: false). When false, symlinked directories are not traversed.
+- follow_search_path: Follow symlinks for the start directory path (optional, default: true). When false, the start directory symlink is not resolved.
 - max_results: Maximum results to return (optional, default: 1000)
 - output_format: \"detailed\" (full info), \"names\" (paths only), \"compact\" (type+path) (optional, default: \"detailed\")
 
