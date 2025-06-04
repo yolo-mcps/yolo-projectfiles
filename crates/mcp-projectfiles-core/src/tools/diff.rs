@@ -15,7 +15,31 @@ const TOOL_NAME: &str = "diff";
 
 #[mcp_tool(
     name = "diff",
-    description = "Compares two files within the project directory and shows differences in unified diff format. Can follow symlinks to compare files outside the project directory. Replaces the need for 'git diff' or other diff commands."
+    description = "Compare two files and show differences. Preferred over system 'diff' or 'git diff' commands.
+
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- file1: First file to compare (required)
+- file2: Second file to compare (required)
+- context_lines: Lines of context around changes (optional, default: 3)
+- ignore_whitespace: Ignore trailing whitespace differences (optional, default: false)
+- follow_symlinks: Follow symlinks to compare files outside project (optional, default: true)
+
+Output format:
+- Unified diff format with file headers
+- Context lines around changes
+- Summary statistics of changes
+
+Examples:
+- Basic comparison: {\"file1\": \"old.txt\", \"file2\": \"new.txt\"}
+- More context: {\"file1\": \"v1.py\", \"file2\": \"v2.py\", \"context_lines\": 5}
+- Ignore whitespace: {\"file1\": \"a.js\", \"file2\": \"b.js\", \"ignore_whitespace\": true}
+- Compare with backup: {\"file1\": \"config.json\", \"file2\": \"config.json.backup\"}
+- Cross-directory: {\"file1\": \"src/main.rs\", \"file2\": \"tests/main.rs\"}
+- Minimal context: {\"file1\": \"before.sql\", \"file2\": \"after.sql\", \"context_lines\": 1}
+
+Shows 'Files are identical' when no differences found."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct DiffTool {
@@ -25,17 +49,19 @@ pub struct DiffTool {
     /// Second file to compare (relative to project root)
     pub file2: String,
     
-    /// Number of context lines to show around changes (default: 3)
+    /// Number of context lines to show around changes (optional, default: 3)
     #[serde(default = "default_context_lines")]
     pub context_lines: u32,
     
-    /// Whether to ignore whitespace differences (default: false)
+    /// Whether to ignore whitespace differences (optional, default: false)
     #[serde(default)]
     pub ignore_whitespace: bool,
     
-    /// Follow symlinks to compare files outside the project directory (default: true)
+    /// Follow symlinks to compare files outside the project directory (optional, default: true)
     #[serde(default = "default_follow_symlinks")]
     pub follow_symlinks: bool,
+    
+
 }
 
 fn default_context_lines() -> u32 {
@@ -45,6 +71,8 @@ fn default_context_lines() -> u32 {
 fn default_follow_symlinks() -> bool {
     true
 }
+
+
 
 impl Default for DiffTool {
     fn default() -> Self {

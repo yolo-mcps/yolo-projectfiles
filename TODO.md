@@ -31,12 +31,8 @@ cargo install --path crates/mcp-projectfiles-bin
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.
 - **Inconsistent parameter documentation**: Tool descriptions inconsistently mark which parameters are optional. Some tools clearly mark "(optional)" while others don't. Need to standardize this across all tools for better usability. Example: grep now marks all optional params, but read, find, edit don't.
 - **copy tool documentation improved**: Updated copy tool documentation to match the patterns of edit, grep, and list tools with clear parameter descriptions, examples, and features. Added comprehensive test coverage including edge cases like copying directories into themselves, handling special characters, and large files.
-- **delete tool documentation**: The delete tool needs documentation improvements to match the patterns of edit, grep, list, and copy tools. Current issues:
-  - mcp_tool description is too brief and lacks structure compared to other tools
-  - Missing clear parameter documentation section with "(optional)" markings
-  - No examples section showing common use cases
-  - Lacks detailed feature list explaining capabilities
-  - Should follow the structure: brief intro, IMPORTANT notes, NOTE about optional params, Parameters list, Features list, Examples
+- **delete tool documentation improved**: Updated delete tool documentation to match the patterns of edit, grep, and list tools. Added comprehensive parameter documentation with "(optional)" markers, examples section, and 4 additional test cases for edge cases.
+- **diff tool documentation improved**: Enhanced diff tool documentation with structured format, clear parameter descriptions, and comprehensive examples. The tool already has excellent test coverage (20 tests) including symlink handling, whitespace ignoring, and various edge cases.
 
 ### Grep Tool Future Improvements (Phase 2 & 3 from GREP_IMPROVEMENTS.md)
 - **Performance**: Implement streaming file reader to avoid loading entire files into memory
@@ -151,6 +147,15 @@ Comprehensive enhancement of the yq tool to match the quality and sophistication
 3. Maintain YAML type semantics
 
 ### Phase 4: Advanced Features (yq-13, yq-14, yq-15)
+
+## Diff Tool Future Improvements
+See DIFF_IMPROVEMENTS.md for comprehensive analysis and implementation plan for diff tool enhancements, including:
+- Line number support for better code referencing
+- Alternative output formats (stats_only, side_by_side, JSON)
+- Color support using existing theme infrastructure
+- Semantic diff features for language-aware comparison
+- Performance optimizations for large files
+- Integration with version control systems
 1. Error handling and null coalescing
 2. Complex write operations
 3. Advanced query features
