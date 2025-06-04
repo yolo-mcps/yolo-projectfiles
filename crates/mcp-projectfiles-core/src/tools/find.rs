@@ -17,7 +17,25 @@ const TOOL_NAME: &str = "find";
 
 #[mcp_tool(
     name = "find",
-    description = "Advanced file search within the project directory. Supports searching by name pattern, file type, size, and modification date. Can follow symlinks to search in directories outside the project directory. Prefer this over system 'find' command when searching project files. More powerful than basic glob/grep."
+    description = "Find files and directories within the project. Preferred over system 'find' command.
+
+Parameters:
+- path: Start directory (default: \".\")
+- name_pattern: File name pattern (\"*.rs\", \"test_*.js\", \"*.{yml,yaml}\")
+- path_pattern: Path pattern (\"*/test/*\", \"src/**\", \"**/node_modules/**\")
+- type_filter: \"file\", \"directory\", or \"any\" (default)
+- size_filter: \"+1M\" (>1MB), \"-100K\" (<100KB), \"50K\" (exactly 50KB)
+- date_filter: \"-7d\" (last 7 days), \"+30d\" (>30 days ago), \"-1h\" (last hour)
+- output_format: \"detailed\" (default), \"names\" (paths only), \"compact\" (type+path)
+- max_results: Limit results (default: 1000)
+- max_depth: Directory depth limit
+- follow_symlinks: Follow symlinks during traversal (default: false)
+
+Examples:
+{\"name_pattern\": \"*.test.js\", \"path_pattern\": \"*/test/*\"} - Test files
+{\"name_pattern\": \"*.rs\", \"path_pattern\": \"src/**\", \"output_format\": \"names\"} - Rust source paths
+{\"date_filter\": \"-1d\", \"type_filter\": \"file\"} - Files modified today
+{\"size_filter\": \"+10M\", \"output_format\": \"names\"} - Large files paths only"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FindTool {
@@ -28,6 +46,11 @@ pub struct FindTool {
     /// Name pattern to match (supports wildcards like *.rs, test_*.js)
     #[serde(default)]
     pub name_pattern: Option<String>,
+    
+    /// Path pattern to match against full file path (supports wildcards)
+    /// Examples: "*/test/*", "**/src/**", "!target/**"
+    #[serde(default)]
+    pub path_pattern: Option<String>,
     
     /// File type filter: "file", "directory", or "any" (default: "any")
     #[serde(default = "default_type_filter")]
@@ -56,6 +79,13 @@ pub struct FindTool {
     /// Maximum number of results to return (default: 1000)
     #[serde(default = "default_max_results")]
     pub max_results: u32,
+    
+    /// Output format for results
+    /// - "detailed": Full metadata (default)
+    /// - "names": Just file paths
+    /// - "compact": Minimal info
+    #[serde(default = "default_output_format")]
+    pub output_format: String,
 }
 
 fn default_path() -> String {
@@ -72,6 +102,10 @@ fn default_max_results() -> u32 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_output_format() -> String {
+    "detailed".to_string()
 }
 
 #[derive(Debug)]
@@ -99,6 +133,11 @@ impl StatefulTool for FindTool {
             .transpose()
             .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.name_pattern.as_ref().unwrap_or(&"".to_string()), &e.to_string())))?;
         
+        let path_pattern = self.path_pattern.as_ref()
+            .map(|p| Pattern::new(p))
+            .transpose()
+            .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.path_pattern.as_ref().unwrap_or(&"".to_string()), &e.to_string())))?;
+        
         let size_filter = self.size_filter.as_ref()
             .map(|f| parse_size_filter(f))
             .transpose()
@@ -117,6 +156,7 @@ impl StatefulTool for FindTool {
             &canonical_search_path,
             &project_root,
             &name_pattern,
+            &path_pattern,
             &size_filter,
             &date_filter,
             0,
@@ -136,26 +176,44 @@ impl StatefulTool for FindTool {
             &results
         };
         
-        for result in display_results {
-            let type_indicator = if result.is_dir { "[DIR] " } else { "[FILE]" };
-            let size_str = if result.is_dir {
-                "".to_string()
-            } else {
-                format!(" ({})", format_size(result.size))
-            };
-            
-            output.push_str(&format!("{} {}{}\n", type_indicator, result.relative_path, size_str));
+        match self.output_format.as_str() {
+            "names" => {
+                // Clean output - just file paths
+                for result in display_results {
+                    output.push_str(&format!("{}\n", result.relative_path));
+                }
+            },
+            "compact" => {
+                // Minimal info - type and path
+                for result in display_results {
+                    let type_char = if result.is_dir { "D" } else { "F" };
+                    output.push_str(&format!("{} {}\n", type_char, result.relative_path));
+                }
+            },
+            _ => { // "detailed" or default
+                // Full metadata
+                for result in display_results {
+                    let type_indicator = if result.is_dir { "[DIR] " } else { "[FILE]" };
+                    let size_str = if result.is_dir {
+                        "".to_string()
+                    } else {
+                        format!(" ({})", format_size(result.size))
+                    };
+                    
+                    output.push_str(&format!("{} {}{}\n", type_indicator, result.relative_path, size_str));
+                }
+                
+                // Add summary for detailed format
+                let found_msg = format_count(results.len(), "item", "items");
+                let searched_msg = format_count(search_count, "item", "items");
+                
+                output.push_str(&format!("\nFound {}", found_msg));
+                if truncated {
+                    output.push_str(&format!(" (showing first {})", self.max_results));
+                }
+                output.push_str(&format!(", searched {} total", searched_msg));
+            }
         }
-        
-        // Add summary
-        let found_msg = format_count(results.len(), "item", "items");
-        let searched_msg = format_count(search_count, "item", "items");
-        
-        output.push_str(&format!("\nFound {}", found_msg));
-        if truncated {
-            output.push_str(&format!(" (showing first {})", self.max_results));
-        }
-        output.push_str(&format!(", searched {} total", searched_msg));
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
@@ -174,6 +232,7 @@ impl FindTool {
         dir: &'a Path,
         project_root: &'a Path,
         name_pattern: &'a Option<Pattern>,
+        path_pattern: &'a Option<Pattern>,
         size_filter: &'a Option<SizeFilter>,
         date_filter: &'a Option<DateFilter>,
         current_depth: u32,
@@ -232,6 +291,7 @@ impl FindTool {
                         &path,
                         project_root,
                         name_pattern,
+                        path_pattern,
                         size_filter,
                         date_filter,
                         current_depth + 1,
@@ -253,6 +313,28 @@ impl FindTool {
                             &path,
                             project_root,
                             name_pattern,
+                            path_pattern,
+                            size_filter,
+                            date_filter,
+                            current_depth + 1,
+                            results,
+                            search_count,
+                        )).await?;
+                    }
+                    continue;
+                }
+            }
+            
+            // Apply path pattern
+            if let Some(pattern) = path_pattern {
+                let path_str = relative_path.replace('\\', "/");
+                if !pattern.matches(&path_str) {
+                    if metadata.is_dir() && current_depth < self.max_depth.unwrap_or(u32::MAX) {
+                        Box::pin(self.search_directory(
+                            &path,
+                            project_root,
+                            name_pattern,
+                            path_pattern,
                             size_filter,
                             date_filter,
                             current_depth + 1,
@@ -282,6 +364,7 @@ impl FindTool {
                                 &path,
                                 project_root,
                                 name_pattern,
+                                path_pattern,
                                 size_filter,
                                 date_filter,
                                 current_depth + 1,
@@ -307,6 +390,7 @@ impl FindTool {
                     &path,
                     project_root,
                     name_pattern,
+                    path_pattern,
                     size_filter,
                     date_filter,
                     current_depth + 1,
@@ -463,6 +547,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "any".to_string(),
             size_filter: None,
             date_filter: None,
@@ -470,6 +555,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -499,6 +585,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: Some("*.txt".to_string()),
+            path_pattern: None,
             type_filter: "file".to_string(),
             size_filter: None,
             date_filter: None,
@@ -506,6 +593,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -534,6 +622,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "file".to_string(),
             size_filter: None,
             date_filter: None,
@@ -541,6 +630,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -557,6 +647,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "directory".to_string(),
             size_filter: None,
             date_filter: None,
@@ -564,6 +655,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -590,6 +682,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "file".to_string(),
             size_filter: Some("+1K".to_string()),
             date_filter: None,
@@ -597,6 +690,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -626,6 +720,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "file".to_string(),
             size_filter: None,
             date_filter: None,
@@ -633,6 +728,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -661,6 +757,7 @@ mod tests {
         let find_tool = FindTool {
             path: ".".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "file".to_string(),
             size_filter: None,
             date_filter: None,
@@ -668,6 +765,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 3,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -693,6 +791,7 @@ mod tests {
         let find_tool = FindTool {
             path: "empty_dir".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "any".to_string(),
             size_filter: None,
             date_filter: None,
@@ -700,6 +799,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -721,6 +821,7 @@ mod tests {
         let find_tool = FindTool {
             path: "nonexistent".to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "any".to_string(),
             size_filter: None,
             date_filter: None,
@@ -728,6 +829,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;
@@ -747,6 +849,7 @@ mod tests {
         let find_tool = FindTool {
             path: outside_path.to_string_lossy().to_string(),
             name_pattern: None,
+            path_pattern: None,
             type_filter: "any".to_string(),
             size_filter: None,
             date_filter: None,
@@ -754,6 +857,7 @@ mod tests {
             follow_symlinks: false,
             follow_search_path: true,
             max_results: 1000,
+            output_format: "detailed".to_string(),
         };
         
         let result = find_tool.call_with_context(&context).await;

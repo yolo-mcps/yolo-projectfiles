@@ -1,6 +1,25 @@
-# YQ Implementation Plan - Matching JQ Tool Quality and Completeness
+# TODO - MCP ProjectFiles
+
+## Session Restart Requirements
+After the following changes were made to the find tool, the binary needs to be recompiled:
+1. **Added path_pattern parameter**: Allows filtering by directory path patterns (e.g., "*/test/*", "src/**")
+2. **Added output_format parameter**: Supports "detailed" (default), "names" (clean paths only), and "compact" formats
+3. **Enhanced documentation**: Added comprehensive inline documentation matching the quality of jq/yq tools
+
+To continue testing:
+```bash
+cargo build --release
+cargo install --path crates/mcp-projectfiles-bin
+# Then restart the session to use the updated find tool
+```
 
 ## Dogfooding Issues & Improvements
+
+### Recently Completed Improvements
+- **find tool enhancement**: Added path_pattern and output_format parameters based on FIND_IMPROVEMENTS.md analysis
+  - ✅ path_pattern enables filtering like "*/test/*" which was the critical missing feature
+  - ✅ output_format="names" provides clean output suitable for piping
+  - ✅ Comprehensive documentation added inline to match jq/yq quality
 
 ### Tool Quality & User Experience Issues
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.

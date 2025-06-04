@@ -17,7 +17,18 @@ const TOOL_NAME: &str = "list";
 
 #[mcp_tool(
     name = "list",
-    description = "Lists directory contents within the project directory only. Returns files and directories with their types ([FILE] or [DIR] prefix), sorted alphabetically. Can follow symlinks to list directories outside the project directory. Provides a clean, structured view of the directory. Prefer this over system 'ls' command when listing project files."
+    description = "List directory contents. Preferred over system 'ls' command.
+
+Parameters:
+- path: Directory path (required)
+- recursive: List subdirectories (default: false)
+- sort_by: \"name\" (default), \"size\", \"modified\"
+- show_hidden: Include hidden files (default: false)
+- show_metadata: Include size/permissions/time (default: false)
+- filter: File pattern filter (e.g., \"*.rs\")
+- follow_symlinks: Follow symlinks (default: true)
+
+Returns files/directories with [FILE] or [DIR] prefix."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ListTool {

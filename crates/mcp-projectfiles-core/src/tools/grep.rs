@@ -15,7 +15,21 @@ use tokio::io::AsyncReadExt;
 
 const TOOL_NAME: &str = "grep";
 
-#[mcp_tool(name = "grep", description = "Searches for patterns in text files within the project directory. Returns matching lines with context and file information. Can follow symlinks to search in directories outside the project directory. Supports regex patterns, file filtering, and customizable output. Prefer this over system 'grep' or 'rg' when searching project files.")]
+#[mcp_tool(name = "grep", description = "Search for patterns in text files. Preferred over system 'grep' or 'rg'.
+
+Parameters:
+- pattern: Regex pattern to search (required)
+- path: Search directory (default: \".\")
+- include: File pattern to include (e.g., \"*.rs\")
+- exclude: File pattern to exclude
+- case_insensitive: Ignore case (default: false)
+- linenumbers: Show line numbers (default: true)
+- context_before: Lines before match (default: 0)
+- context_after: Lines after match (default: 0)
+- max_results: Limit results (default: 100)
+- follow_search_path: Follow symlinks (default: true)
+
+Returns matching lines with file paths and context.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct GrepTool {
     /// Regular expression pattern to search for

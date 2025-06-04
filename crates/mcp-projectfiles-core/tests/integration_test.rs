@@ -663,6 +663,7 @@ async fn test_find_tool_symlink_within_project() {
     let tool = FindTool {
         path: "symlink_dir".to_string(),
         name_pattern: Some("*.txt".to_string()),
+        path_pattern: None,
         type_filter: "file".to_string(),
         size_filter: None,
         date_filter: None,
@@ -670,6 +671,7 @@ async fn test_find_tool_symlink_within_project() {
         follow_symlinks: true,
         follow_search_path: true,
         max_results: 100,
+        output_format: "detailed".to_string(),
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -696,6 +698,7 @@ async fn test_find_tool_symlink_outside_project_with_follow() {
     let tool = FindTool {
         path: "external_link".to_string(),
         name_pattern: Some("*.txt".to_string()),
+        path_pattern: None,
         type_filter: "file".to_string(),
         size_filter: None,
         date_filter: None,
@@ -703,6 +706,7 @@ async fn test_find_tool_symlink_outside_project_with_follow() {
         follow_symlinks: true,
         follow_search_path: true,
         max_results: 100,
+        output_format: "detailed".to_string(),
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -729,6 +733,7 @@ async fn test_find_tool_symlink_outside_project_no_follow() {
     let tool = FindTool {
         path: "external_link".to_string(),
         name_pattern: Some("*.txt".to_string()),
+        path_pattern: None,
         type_filter: "file".to_string(),
         size_filter: None,
         date_filter: None,
@@ -736,6 +741,7 @@ async fn test_find_tool_symlink_outside_project_no_follow() {
         follow_symlinks: false,
         follow_search_path: false,
         max_results: 100,
+        output_format: "detailed".to_string(),
     };
     
     let result = tool.call_with_context(&context).await;
@@ -760,6 +766,7 @@ async fn test_find_tool_broken_symlink() {
     let tool = FindTool {
         path: ".".to_string(),
         name_pattern: Some("broken_link".to_string()),
+        path_pattern: None,
         type_filter: "any".to_string(),
         size_filter: None,
         date_filter: None,
@@ -767,6 +774,7 @@ async fn test_find_tool_broken_symlink() {
         follow_symlinks: false,
         follow_search_path: true,
         max_results: 100,
+        output_format: "detailed".to_string(),
     };
     
     let result = tool.call_with_context(&context).await.unwrap();

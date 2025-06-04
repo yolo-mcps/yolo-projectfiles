@@ -31,8 +31,34 @@ fn default_binary_check() -> bool {
     true
 }
 
+fn default_case() -> String {
+    "sensitive".to_string()
+}
 
-#[mcp_tool(name = "read", description = "Reads text file contents within the project directory only. Returns content with line numbers by default (format: line_number<tab>content). Use linenumbers:false to get raw content without line numbers, which is useful when reading files for editing. Supports partial reading via offset/limit, tail mode for reading from end, pattern filtering, binary file detection, and handles large files efficiently. Can follow symlinks to read content outside the project directory. Prefer this over system 'cat', 'head', 'tail' commands when reading project files. NOTE: Optional parameters should be omitted entirely when not needed, rather than passed as null.")]
+
+#[mcp_tool(name = "read", description = "Read text files within the project. Preferred over system 'cat', 'head', 'tail' commands.
+
+Features:
+- Line numbers by default (format: line_number<tab>content)
+- Partial reading with offset/limit
+- Pattern filtering with regex
+- Tail mode for reading from end
+- Binary file detection
+- Symlink support
+
+Parameters:
+- path: File path (required)
+- offset: Start line (1-indexed, default: 0 for beginning)
+- limit: Max lines to read (0 for all, default: 0)
+- linenumbers: Show line numbers (default: true, set to false when reading for edit)
+- tail: Read from end (default: false)
+- pattern: Regex to filter lines
+- case: For pattern matching (\"sensitive\" or \"insensitive\", default: \"sensitive\")
+- encoding: Text encoding (default: \"utf-8\")
+- follow_symlinks: Follow symlinks (default: true)
+
+NOTE: Omit optional parameters when not needed, don't pass null.
+HINT: Use linenumbers:false when reading files you plan to edit.")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ReadTool {
     /// Path to the file to read (relative to project root)
@@ -52,9 +78,9 @@ pub struct ReadTool {
     /// Pattern to filter lines (regex). Only lines matching this pattern will be returned
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
-    /// Whether pattern matching should be case-insensitive (default: false)
-    #[serde(default)]
-    pub case_insensitive: bool,
+    /// Case sensitivity for pattern matching: "sensitive" (default) or "insensitive"
+    #[serde(default = "default_case")]
+    pub case: String,
     /// Text encoding to use when reading the file (default: "utf-8")
     /// Supported: "utf-8", "ascii", "latin1", "utf-16", "utf-16le", "utf-16be"
     #[serde(default = "default_encoding")]
@@ -75,6 +101,14 @@ impl StatefulTool for ReadTool {
     ) -> Result<CallToolResult, CallToolError> {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to get project root: {}", e))))?;
+        
+        // Validate case parameter
+        if self.case != "sensitive" && self.case != "insensitive" {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Invalid case value '{}'. Must be 'sensitive' or 'insensitive'", self.case)
+            )));
+        }
         
         // Use the utility function to resolve path with symlink support
         let canonical_path = resolve_path_for_read(&self.path, &project_root, self.follow_symlinks, TOOL_NAME)?;
@@ -131,7 +165,7 @@ impl StatefulTool for ReadTool {
         // Apply pattern filtering if specified
         let (lines, line_numbers): (Vec<&str>, Vec<usize>) = if let Some(ref pattern) = self.pattern {
             let regex = match RegexBuilder::new(pattern)
-                .case_insensitive(self.case_insensitive)
+                .case_insensitive(self.case == "insensitive")
                 .build()
             {
                 Ok(r) => r,
@@ -301,7 +335,7 @@ mod tests {
             binary_check: true,
             tail: false,
             pattern: None,
-            case_insensitive: false,
+            case: "sensitive".to_string(),
             encoding: "utf-8".to_string(),
             linenumbers: true,
             follow_symlinks: true,
@@ -602,7 +636,7 @@ mod tests {
         
         let mut tool = create_read_tool("case_test.txt");
         tool.pattern = Some("todo".to_string());
-        tool.case_insensitive = true;
+        tool.case = "insensitive".to_string();
         let result = test_read_tool_in_dir(&temp_dir, tool).await.unwrap();
         
         let output = match &result.content[0] {
@@ -764,6 +798,20 @@ mod tests {
         assert!(!output.contains("banana"));
         assert!(!output.contains("blueberry"));
         assert!(!output.contains("\t"));
+    }
+
+    // Case parameter validation tests
+    #[tokio::test]
+    async fn test_invalid_case_parameter() {
+        let temp_dir = TempDir::new().unwrap();
+        let _file_path = create_test_file(&temp_dir, "test.txt", "Test content").await;
+        
+        let mut tool = create_read_tool("test.txt");
+        tool.case = "invalid".to_string();
+        let result = test_read_tool_in_dir(&temp_dir, tool).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid case value"));
     }
 
     // Symlink following tests
