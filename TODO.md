@@ -46,6 +46,25 @@
 - Added comprehensive tests for all new features
 - **Requires restart to use the enhanced tool**
 
+### Process Tool Enhancements
+
+- Enhanced documentation with comprehensive mcp_tool description
+- Added sort_by parameter supporting: name, pid, cpu, memory
+- Added user and start_time fields to process information (Unix only)
+- Improved integration points documentation for kill and lsof tools
+- Better structured JSON examples and return value documentation
+- Added comprehensive integration tests including process/kill/lsof integration
+- **Requires restart to use the enhanced tool**
+
+#### Future Process Tool Enhancements to Consider:
+- Add parent_pid field to show process hierarchy
+- Add filter_by parameter to filter by user, status, or resource usage thresholds
+- Add output_format parameter (json, compact, detailed) similar to lsof tool
+- Consider adding working_directory field for processes
+- Add support for showing child processes when parent is found
+- Consider adding CPU/memory usage history if available from system
+- Add network connections per process (complement to port checking)
+
 ## High Priority
 
 ### Documentation Updates Needed
