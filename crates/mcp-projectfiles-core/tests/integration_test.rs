@@ -190,7 +190,7 @@ async fn test_grep_tool_basic() {
 
     
     let tool = GrepTool {
-        pattern: "hello".to_string(),
+        pattern: Some("hello".to_string()),
         path: ".".to_string(),
         include: None,
         exclude: None,
@@ -200,6 +200,8 @@ async fn test_grep_tool_basic() {
         context_after: Some(0),
         max_results: 0, // 0 means no limit
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -220,7 +222,7 @@ async fn test_grep_tool_case_insensitive() {
     fs::write(temp_path.join("test.txt"), "Hello World\nHELLO WORLD\nhello world").unwrap();
     
     let tool = GrepTool {
-        pattern: "hello".to_string(),
+        pattern: Some("hello".to_string()),
         path: ".".to_string(),
         include: None,
         exclude: None,
@@ -230,6 +232,8 @@ async fn test_grep_tool_case_insensitive() {
         context_after: Some(0),
         max_results: 0,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -249,7 +253,7 @@ async fn test_grep_tool_context() {
     fs::write(temp_path.join("test.txt"), "line1\nline2\nmatch\nline4\nline5").unwrap();
     
     let tool = GrepTool {
-        pattern: "match".to_string(),
+        pattern: Some("match".to_string()),
         path: ".".to_string(),
         include: None,
         exclude: None,
@@ -259,6 +263,8 @@ async fn test_grep_tool_context() {
         context_after: Some(1),
         max_results: 0,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -280,7 +286,7 @@ async fn test_grep_tool_file_filter() {
     fs::write(temp_path.join("test.txt"), "match").unwrap();
     
     let tool = GrepTool {
-        pattern: "match".to_string(),
+        pattern: Some("match".to_string()),
         path: ".".to_string(),
         include: Some("*.rs".to_string()),
         exclude: None,
@@ -290,6 +296,8 @@ async fn test_grep_tool_file_filter() {
         context_after: Some(0),
         max_results: 0,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -310,7 +318,7 @@ async fn test_grep_tool_max_results() {
     fs::write(temp_path.join("test.txt"), content).unwrap();
     
     let tool = GrepTool {
-        pattern: "match".to_string(),
+        pattern: Some("match".to_string()),
         path: ".".to_string(),
         include: None,
         exclude: None,
@@ -320,6 +328,8 @@ async fn test_grep_tool_max_results() {
         context_after: Some(0),
         max_results: 3,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -330,6 +340,144 @@ async fn test_grep_tool_max_results() {
     let match_lines = lines.iter().filter(|line| line.contains(":\tmatch")).count();
     assert_eq!(match_lines, 3);
     assert!(output.contains("[limited to 3 results]"));
+}
+
+#[tokio::test]
+async fn test_grep_tool_inverse_match() {
+    let (_temp_dir, context) = setup_test_env();
+    
+    // Create test files
+    let project_root = context.get_project_root().unwrap();
+    let file_path = project_root.join("test_inverse.txt");
+    fs::write(&file_path, "Line 1: TODO task\nLine 2: DONE task\nLine 3: TODO another\nLine 4: INFO message").unwrap();
+    
+    // Test inverse matching
+    let tool = GrepTool {
+        pattern: Some("TODO".to_string()),
+        path: ".".to_string(),
+        include: None,
+        exclude: None,
+        case: "sensitive".to_string(),
+        linenumbers: true,
+        context_before: Some(0),
+        context_after: Some(0),
+        max_results: 0,
+        follow_search_path: true,
+        invert_match: true,  // This should match lines NOT containing TODO
+        patterns: None,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Should find lines without TODO
+    assert!(output.contains("2:\tLine 2: DONE task"));
+    assert!(output.contains("4:\tLine 4: INFO message"));
+    // Should NOT find lines with TODO
+    assert!(!output.contains("1:\tLine 1: TODO task"));
+    assert!(!output.contains("3:\tLine 3: TODO another"));
+}
+
+#[tokio::test]
+async fn test_grep_tool_single_file_search() {
+    let (_temp_dir, context) = setup_test_env();
+    
+    // Create test file
+    let project_root = context.get_project_root().unwrap();
+    let file_path = project_root.join("single_file.txt");
+    fs::write(&file_path, "Line 1: TODO task\nLine 2: DONE task\nLine 3: TODO another").unwrap();
+    
+    // Test searching a single file directly
+    let tool = GrepTool {
+        pattern: Some("TODO".to_string()),
+        path: "single_file.txt".to_string(),  // Specific file, not directory
+        include: None,
+        exclude: None,
+        case: "sensitive".to_string(),
+        linenumbers: true,
+        context_before: Some(0),
+        context_after: Some(0),
+        max_results: 0,
+        follow_search_path: true,
+        invert_match: false,
+        patterns: None,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Should find TODO lines
+    assert!(output.contains("1:\tLine 1: TODO task"));
+    assert!(output.contains("3:\tLine 3: TODO another"));
+    // Should NOT find DONE line
+    assert!(!output.contains("2:\tLine 2: DONE task"));
+}
+
+#[tokio::test]
+async fn test_grep_tool_multiple_patterns() {
+    let (_temp_dir, context) = setup_test_env();
+    
+    // Create test file with various markers
+    let project_root = context.get_project_root().unwrap();
+    let file_path = project_root.join("multi_pattern.txt");
+    fs::write(&file_path, "Line 1: TODO implement this\nLine 2: Normal line\nLine 3: FIXME broken code\nLine 4: Another normal line\nLine 5: BUG memory leak\nLine 6: INFO just info").unwrap();
+    
+    // Test multiple patterns with OR logic
+    let tool = GrepTool {
+        pattern: None,  // Using patterns instead
+        patterns: Some(vec!["TODO".to_string(), "FIXME".to_string(), "BUG".to_string()]),
+        path: ".".to_string(),
+        include: None,
+        exclude: None,
+        case: "sensitive".to_string(),
+        linenumbers: true,
+        context_before: Some(0),
+        context_after: Some(0),
+        max_results: 0,
+        follow_search_path: true,
+        invert_match: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Should find all three pattern types
+    assert!(output.contains("1:\tLine 1: TODO implement this"));
+    assert!(output.contains("3:\tLine 3: FIXME broken code"));
+    assert!(output.contains("5:\tLine 5: BUG memory leak"));
+    // Should NOT find lines without these patterns
+    assert!(!output.contains("2:\tLine 2: Normal line"));
+    assert!(!output.contains("4:\tLine 4: Another normal line"));
+    assert!(!output.contains("6:\tLine 6: INFO just info"));
+    // Check that output mentions multiple patterns
+    assert!(output.contains("patterns ['TODO', 'FIXME', 'BUG']"));
+}
+
+#[tokio::test]
+async fn test_grep_tool_requires_pattern() {
+    let (_temp_dir, context) = setup_test_env();
+    
+    // Test that at least one pattern is required
+    let tool = GrepTool {
+        pattern: None,
+        patterns: None,
+        path: ".".to_string(),
+        include: None,
+        exclude: None,
+        case: "sensitive".to_string(),
+        linenumbers: true,
+        context_before: Some(0),
+        context_after: Some(0),
+        max_results: 0,
+        follow_search_path: true,
+        invert_match: false,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    let error_msg = error.to_string();
+    assert!(error_msg.contains("At least one of 'pattern' or 'patterns' must be provided"));
 }
 
 // Kill Tool Tests
@@ -1065,7 +1213,7 @@ async fn test_grep_tool_symlink_within_project() {
     }
     
     let tool = GrepTool {
-        pattern: "hello".to_string(),
+        pattern: Some("hello".to_string()),
         path: "symlink_dir".to_string(),
         case: "sensitive".to_string(),
         linenumbers: true,
@@ -1075,6 +1223,8 @@ async fn test_grep_tool_symlink_within_project() {
         context_before: None,
         context_after: None,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1101,7 +1251,7 @@ async fn test_grep_tool_symlink_outside_project_with_follow() {
     }
     
     let tool = GrepTool {
-        pattern: "hello".to_string(),
+        pattern: Some("hello".to_string()),
         path: "external_link".to_string(),
         case: "sensitive".to_string(),
         linenumbers: true,
@@ -1111,6 +1261,8 @@ async fn test_grep_tool_symlink_outside_project_with_follow() {
         context_before: None,
         context_after: None,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1136,7 +1288,7 @@ async fn test_grep_tool_symlink_outside_project_no_follow() {
     }
     
     let tool = GrepTool {
-        pattern: "hello".to_string(),
+        pattern: Some("hello".to_string()),
         path: "external_link".to_string(),
         case: "sensitive".to_string(),
         linenumbers: true,
@@ -1146,6 +1298,8 @@ async fn test_grep_tool_symlink_outside_project_no_follow() {
         context_before: None,
         context_after: None,
         follow_search_path: false,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -1175,7 +1329,7 @@ async fn test_grep_tool_files_within_symlinked_directory() {
     }
     
     let tool = GrepTool {
-        pattern: "target pattern".to_string(),
+        pattern: Some("target pattern".to_string()),
         path: "external_link".to_string(),
         case: "sensitive".to_string(),
         linenumbers: true,
@@ -1185,6 +1339,8 @@ async fn test_grep_tool_files_within_symlinked_directory() {
         context_before: None,
         context_after: None,
         follow_search_path: true,
+        invert_match: false,
+        patterns: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();

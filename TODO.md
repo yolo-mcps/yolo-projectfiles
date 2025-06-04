@@ -20,9 +20,26 @@ cargo install --path crates/mcp-projectfiles-bin
   - ✅ path_pattern enables filtering like "*/test/*" which was the critical missing feature
   - ✅ output_format="names" provides clean output suitable for piping
   - ✅ Comprehensive documentation added inline to match jq/yq quality
+- **grep tool major improvements**: Implemented Phase 1 critical fixes from GREP_IMPROVEMENTS.md
+  - ✅ Single file search support - can now search files directly, not just directories
+  - ✅ Binary file handling - automatically skips binary files instead of erroring
+  - ✅ Inverse matching - added invert_match parameter (like grep -v)
+  - ✅ Multiple patterns - added patterns array for OR logic (like grep -e pattern1 -e pattern2)
+  - ✅ Enhanced documentation with clear examples
 
 ### Tool Quality & User Experience Issues
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.
+- **Inconsistent parameter documentation**: Tool descriptions inconsistently mark which parameters are optional. Some tools clearly mark "(optional)" while others don't. Need to standardize this across all tools for better usability. Example: grep now marks all optional params, but read, find, edit don't.
+
+### Grep Tool Future Improvements (Phase 2 & 3 from GREP_IMPROVEMENTS.md)
+- **Performance**: Implement streaming file reader to avoid loading entire files into memory
+- **Gitignore support**: Parse and respect .gitignore files to skip build artifacts, node_modules, etc.
+- **Enhanced include/exclude**: Support multiple include/exclude patterns (currently single pattern only)
+- **Output formats**: Add --count, --files-with-matches, --files-without-match options
+- **Type-based filtering**: Add predefined file type groups (--type rust, --type-not js)
+- **Color output**: Highlight matches in output for better visibility
+- **Word boundaries**: Add -w flag equivalent for whole word matching
+- **Performance**: Consider parallel directory traversal for large codebases
 
 ## Project Overview
 Comprehensive enhancement of the yq tool to match the quality and sophistication of our current jq implementation. Our jq tool represents ~90% of real jq functionality and is highly sophisticated - yq needs to be equally powerful for YAML manipulation. This involves porting the complete query engine, all built-in functions, operators, and conditional logic from jq while adding YAML-specific enhancements.

@@ -102,63 +102,94 @@ fn generate_colored_diff(original: &str, modified: &str, file_path: &str) -> Str
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditOperation {
     /// The exact string to find and replace
-    pub old_string: String,
+    pub old: String,
     /// The string to replace it with
-    pub new_string: String,
+    pub new: String,
     /// Expected number of replacements (defaults to 1)
-    #[serde(default = "default_expected_replacements")]
-    pub expected_replacements: u32,
+    #[serde(default = "default_expected")]
+    pub expected: u32,
 }
 
-fn default_expected_replacements() -> u32 {
+fn default_expected() -> u32 {
     1
 }
 
-/// Edit tool for performing string replacements in files.
+/// Replace exact strings in files. Preferred over system text editors.
+///
+/// IMPORTANT: You must choose either single edit mode OR multi-edit mode, not both.
+/// NOTE: Omit optional parameters when not needed, don't pass null.
+///
+/// Parameters:
+/// - path: File to edit (required)
+/// - old: Exact string to find (optional - required for single mode)
+/// - new: Replacement string (optional - required for single mode)
+/// - expected: Expected match count (optional - default: 1)
+/// - edits: Array of edit operations (optional - required for multi mode)
+/// - show_diff: Show changes made (optional - default: false)
 ///
 /// # Single Edit Mode
-/// Use this mode for simple, one-time replacements:
+/// Use for simple, one-time replacements. Requires 'old' and 'new' parameters:
 /// ```json
 /// {
-///   "file_path": "src/main.rs",
-///   "old_string": "println!(\"Hello\")",
-///   "new_string": "println!(\"Hello, World\")",
-///   "expected_replacements": 1
+///   "path": "src/main.rs",
+///   "old": "println!(\"Hello\")",
+///   "new": "println!(\"Hello, World\")"
 /// }
 /// ```
 ///
-/// # Multi-Edit Mode
-/// Use this mode for multiple sequential replacements:
+/// With expected count:
 /// ```json
 /// {
-///   "file_path": "src/config.rs",
+///   "path": "src/config.rs",
+///   "old": "debug = false",
+///   "new": "debug = true",
+///   "expected": 2
+/// }
+/// ```
+///
+/// # Multi-Edit Mode  
+/// Use for multiple sequential replacements. Requires 'edits' array:
+/// ```json
+/// {
+///   "path": "src/config.rs",
 ///   "edits": [
 ///     {
-///       "old_string": "const VERSION: &str = \"1.0.0\"",
-///       "new_string": "const VERSION: &str = \"1.1.0\"",
-///       "expected_replacements": 1
+///       "old": "const VERSION: &str = \"1.0.0\"",
+///       "new": "const VERSION: &str = \"1.1.0\"",
+///       "expected": 1
 ///     },
 ///     {
-///       "old_string": "debug = false",
-///       "new_string": "debug = true",
-///       "expected_replacements": 2
+///       "old": "debug = false",
+///       "new": "debug = true",
+///       "expected": 2
 ///     }
 ///   ]
 /// }
 /// ```
 ///
 /// # Creating New Files
-/// To create a new file, use multi-edit mode with an empty old_string in the first edit:
+/// To create a new file, use multi-edit mode with an empty old in the first edit:
 /// ```json
 /// {
-///   "file_path": "src/new_file.rs",
+///   "path": "src/new_file.rs",
 ///   "edits": [
 ///     {
-///       "old_string": "",
-///       "new_string": "fn main() {\n    println!(\"New file!\");\n}",
-///       "expected_replacements": 1
+///       "old": "",
+///       "new": "fn main() {\n    println!(\"New file!\");\n}",
+///       "expected": 1
 ///     }
 ///   ]
+/// }
+/// ```
+///
+/// # Show Diff
+/// To see changes before they're applied:
+/// ```json
+/// {
+///   "path": "README.md",
+///   "old": "version 1.0",
+///   "new": "version 2.0",
+///   "show_diff": true
 /// }
 /// ```
 #[mcp_tool(
@@ -167,36 +198,35 @@ fn default_expected_replacements() -> u32 {
 
 CRITICAL: File MUST be read first. String must match EXACTLY (whitespace, indentation, line endings).
 HINT: When reading a file for editing, use linenumbers:false to get raw content without line prefixes.
+NOTE: Omit optional parameters when not needed, don't pass null.
 
 Two modes:
-1) Single edit: Use old_string/new_string/expected_replacements
+1) Single edit: Use old/new/expected
 2) Multi-edit: Use edits array for sequential replacements
 
 Parameters:
-- file_path: File to edit (required)
-- old_string: Exact string to find (single mode)
-- new_string: Replacement string (single mode)
-- expected_replacements: Expected match count (default: 1)
-- edits: Array of {old_string, new_string, expected_replacements} (multi mode)
-- show_diff: Show changes made (default: false)
-
-Common errors: Including line numbers from Read output, wrong whitespace/indentation."
+- path: File to edit (required)
+- old: Exact string to find (optional, required for single mode)
+- new: Replacement string (optional, required for single mode)  
+- expected: Expected match count (optional, default: 1)
+- edits: Array of {old, new, expected} (optional, required for multi mode)
+- show_diff: Show changes made (optional, default: false)
+"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditTool {
     /// Path to the file to edit (relative to project root)
-    pub file_path: String,
+    pub path: String,
 
-    // Single edit mode (backwards compatibility)
     /// The exact string to find and replace (for single edit mode)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_string: Option<String>,
+    pub old: Option<String>,
     /// The string to replace it with (for single edit mode)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_string: Option<String>,
+    pub new: Option<String>,
     /// Expected number of replacements (for single edit mode, defaults to 1)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_replacements: Option<u32>,
+    pub expected: Option<u32>,
 
     // Multiple edit mode
     /// Array of edit operations to perform sequentially
@@ -216,13 +246,11 @@ impl StatefulTool for EditTool {
     ) -> Result<CallToolResult, CallToolError> {
         // Validate that single and multi-edit parameters are not mixed
         if self.edits.is_some()
-            && (self.old_string.is_some()
-                || self.new_string.is_some()
-                || self.expected_replacements.is_some())
+            && (self.old.is_some() || self.new.is_some() || self.expected.is_some())
         {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                "Cannot mix single edit parameters (old_string/new_string/expected_replacements) with multi-edit (edits array)",
+                "Cannot mix single edit parameters (old/new/expected) with multi-edit (edits array)",
             )));
         }
 
@@ -237,17 +265,17 @@ impl StatefulTool for EditTool {
                     "No edit operations provided",
                 )));
             }
-        } else if let (Some(old_string), Some(new_string)) = (self.old_string, self.new_string) {
+        } else if let (Some(old), Some(new)) = (self.old, self.new) {
             // Single edit mode - convert to list
             vec![EditOperation {
-                old_string,
-                new_string,
-                expected_replacements: self.expected_replacements.unwrap_or(1),
+                old,
+                new,
+                expected: self.expected.unwrap_or(1),
             }]
         } else {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                "Must provide either 'edits' array or 'old_string'/'new_string' pair",
+                "Must provide either 'edits' array or 'old'/'new' pair",
             )));
         };
         let project_root = context.get_project_root().map_err(|e| {
@@ -265,7 +293,7 @@ impl StatefulTool for EditTool {
             ))
         })?;
 
-        let requested_path = Path::new(&self.file_path);
+        let requested_path = Path::new(&self.path);
         let absolute_path = if requested_path.is_absolute() {
             requested_path.to_path_buf()
         } else {
@@ -277,7 +305,7 @@ impl StatefulTool for EditTool {
             absolute_path.canonicalize().map_err(|e| {
                 CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
-                    &format!("Failed to resolve path '{}': {}", self.file_path, e),
+                    &format!("Failed to resolve path '{}': {}", self.path, e),
                 ))
             })?
         } else {
@@ -294,30 +322,26 @@ impl StatefulTool for EditTool {
         if !canonical_path.starts_with(&canonical_project_root) {
             return Err(CallToolError::from(tool_errors::access_denied(
                 TOOL_NAME,
-                &self.file_path,
+                &self.path,
                 "Path is outside the project directory",
             )));
         }
 
         if !canonical_path.exists() {
             return Err(CallToolError::from(tool_errors::file_not_found(
-                TOOL_NAME,
-                &self.file_path,
+                TOOL_NAME, &self.path,
             )));
         }
 
         if !canonical_path.is_file() {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                &format!("Path is not a file: {}", self.file_path),
+                &format!("Path is not a file: {}", self.path),
             )));
         }
 
-        // Check if this is a new file creation (first edit has empty old_string)
-        let is_new_file = edits
-            .first()
-            .map(|e| e.old_string.is_empty())
-            .unwrap_or(false);
+        // Check if this is a new file creation (first edit has empty old)
+        let is_new_file = edits.first().map(|e| e.old.is_empty()).unwrap_or(false);
 
         if !canonical_path.exists() && is_new_file {
             // Create the file with empty content
@@ -346,19 +370,16 @@ impl StatefulTool for EditTool {
         if !is_new_file && !read_files.contains(&canonical_path) {
             return Err(CallToolError::from(tool_errors::operation_not_permitted(
                 TOOL_NAME,
-                &format!("File must be read before editing: {}", self.file_path),
+                &format!("File must be read before editing: {}", self.path),
             )));
         }
 
         // Validate all edits first
         for (idx, edit) in edits.iter().enumerate() {
-            if edit.old_string == edit.new_string {
+            if edit.old == edit.new {
                 return Err(CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
-                    &format!(
-                        "Edit {}: old_string and new_string cannot be the same",
-                        idx + 1
-                    ),
+                    &format!("Edit {}: old and new cannot be the same", idx + 1),
                 )));
             }
         }
@@ -383,41 +404,41 @@ impl StatefulTool for EditTool {
         let mut first_edit_line = None;
         for (idx, edit) in edits.iter().enumerate() {
             // Count occurrences
-            let occurrence_count = content.matches(&edit.old_string).count();
+            let occurrence_count = content.matches(&edit.old).count();
 
-            if occurrence_count == 0 && !edit.old_string.is_empty() {
+            if occurrence_count == 0 && !edit.old.is_empty() {
                 return Err(CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
                     &format!(
                         "Edit {}: String '{}' not found in content",
                         idx + 1,
-                        edit.old_string
+                        edit.old
                     ),
                 )));
             }
 
-            if occurrence_count != edit.expected_replacements as usize {
+            if occurrence_count != edit.expected as usize {
                 return Err(CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
                     &format!(
                         "Edit {}: Expected {} replacements but found {} occurrences",
                         idx + 1,
-                        edit.expected_replacements,
+                        edit.expected,
                         occurrence_count
                     ),
                 )));
             }
 
             // Track line number for the first edit
-            if first_edit_line.is_none() && !edit.old_string.is_empty() {
-                if let Some(pos) = content.find(&edit.old_string) {
+            if first_edit_line.is_none() && !edit.old.is_empty() {
+                if let Some(pos) = content.find(&edit.old) {
                     let line_number = content[..pos].matches('\n').count() + 1;
                     first_edit_line = Some(line_number);
                 }
             }
 
             // Perform replacement
-            content = content.replace(&edit.old_string, &edit.new_string);
+            content = content.replace(&edit.old, &edit.new);
             total_replacements += occurrence_count;
         }
 
@@ -472,7 +493,7 @@ impl StatefulTool for EditTool {
                 message.push_str("\n\n");
 
                 // Generate colored diff
-                let colored_diff = generate_colored_diff(&original, &content, &self.file_path);
+                let colored_diff = generate_colored_diff(&original, &content, &self.path);
 
                 if colored_diff.lines().count() > 2 {
                     // More than just headers
@@ -556,14 +577,14 @@ mod tests {
 
         // Try to mix single edit and multi-edit parameters
         let tool = EditTool {
-            file_path: "test.txt".to_string(),
-            old_string: Some("old".to_string()),
-            new_string: Some("new".to_string()),
-            expected_replacements: Some(1),
+            path: "test.txt".to_string(),
+            old: Some("old".to_string()),
+            new: Some("new".to_string()),
+            expected: Some(1),
             edits: Some(vec![EditOperation {
-                old_string: "foo".to_string(),
-                new_string: "bar".to_string(),
-                expected_replacements: 1,
+                old: "foo".to_string(),
+                new: "bar".to_string(),
+                expected: 1,
             }]),
             show_diff: false,
         };
@@ -590,10 +611,10 @@ mod tests {
 
         // Perform single edit
         let tool = EditTool {
-            file_path: "test.txt".to_string(),
-            old_string: Some("world".to_string()),
-            new_string: Some("Rust".to_string()),
-            expected_replacements: Some(1),
+            path: "test.txt".to_string(),
+            old: Some("world".to_string()),
+            new: Some("Rust".to_string()),
+            expected: Some(1),
             edits: None,
             show_diff: false,
         };
@@ -619,20 +640,20 @@ mod tests {
 
         // Perform multiple edits
         let tool = EditTool {
-            file_path: "test.txt".to_string(),
-            old_string: None,
-            new_string: None,
-            expected_replacements: None,
+            path: "test.txt".to_string(),
+            old: None,
+            new: None,
+            expected: None,
             edits: Some(vec![
                 EditOperation {
-                    old_string: "foo".to_string(),
-                    new_string: "FOO".to_string(),
-                    expected_replacements: 2,
+                    old: "foo".to_string(),
+                    new: "FOO".to_string(),
+                    expected: 2,
                 },
                 EditOperation {
-                    old_string: "bar".to_string(),
-                    new_string: "BAR".to_string(),
-                    expected_replacements: 1,
+                    old: "bar".to_string(),
+                    new: "BAR".to_string(),
+                    expected: 1,
                 },
             ]),
             show_diff: false,
@@ -658,10 +679,10 @@ mod tests {
 
         // Edit with diff enabled
         let tool = EditTool {
-            file_path: "test.txt".to_string(),
-            old_string: Some("Line 2".to_string()),
-            new_string: Some("Modified Line 2".to_string()),
-            expected_replacements: Some(1),
+            path: "test.txt".to_string(),
+            old: Some("Line 2".to_string()),
+            new: Some("Modified Line 2".to_string()),
+            expected: Some(1),
             edits: None,
             show_diff: true,
         };
@@ -687,10 +708,10 @@ mod tests {
         tokio::fs::write(&file_path, "content").await.unwrap();
 
         let tool = EditTool {
-            file_path: "test.txt".to_string(),
-            old_string: Some("content".to_string()),
-            new_string: Some("new content".to_string()),
-            expected_replacements: Some(1),
+            path: "test.txt".to_string(),
+            old: Some("content".to_string()),
+            new: Some("new content".to_string()),
+            expected: Some(1),
             edits: None,
             show_diff: false,
         };
@@ -706,4 +727,3 @@ mod tests {
         );
     }
 }
-
