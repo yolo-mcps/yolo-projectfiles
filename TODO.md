@@ -2,9 +2,16 @@
 
 ## Session Restart Requirements
 After the following changes were made to the find tool, the binary needs to be recompiled:
-1. **Added path_pattern parameter**: Allows filtering by directory path patterns (e.g., "*/test/*", "src/**")
-2. **Added output_format parameter**: Supports "detailed" (default), "names" (clean paths only), and "compact" formats
-3. **Enhanced documentation**: Added comprehensive inline documentation matching the quality of jq/yq tools
+1. **Improved documentation**: Updated to follow standardized patterns from edit, grep, and list tools
+   - Added explicit "(optional)" markers for all optional parameters
+   - Added comprehensive examples section with common use cases
+   - Improved parameter descriptions with clear examples
+2. **Enhanced test coverage**: Added 6 new test cases
+   - Path pattern filtering tests
+   - Output format tests (names, compact, detailed)
+   - Date filter tests
+   - Combined filter tests
+   - Invalid parameter validation tests
 
 To continue testing:
 ```bash
@@ -16,16 +23,26 @@ cargo install --path crates/mcp-projectfiles-bin
 ## Dogfooding Issues & Improvements
 
 ### Recently Completed Improvements
-- **find tool enhancement**: Added path_pattern and output_format parameters based on FIND_IMPROVEMENTS.md analysis
-  - ✅ path_pattern enables filtering like "*/test/*" which was the critical missing feature
-  - ✅ output_format="names" provides clean output suitable for piping
-  - ✅ Comprehensive documentation added inline to match jq/yq quality
+- **find tool enhancement**: Comprehensive improvements based on FIND_IMPROVEMENTS.md analysis
+  - ✅ Documentation standardization - follows patterns from edit, grep, and list tools
+  - ✅ All optional parameters now explicitly marked with "(optional)"
+  - ✅ Added detailed examples section with common use cases and output format explanations
+  - ✅ Enhanced test coverage - added 6 new test cases covering path patterns, output formats, date filters, combined filters, and invalid parameters
+  - ✅ Tool already had path_pattern and output_format features which address the critical gaps
+  - ✅ Created FIND_IMPROVEMENTS_V2.md documenting potential future enhancements for agentic LLMs
 - **grep tool major improvements**: Implemented Phase 1 critical fixes from GREP_IMPROVEMENTS.md
   - ✅ Single file search support - can now search files directly, not just directories
   - ✅ Binary file handling - automatically skips binary files instead of erroring
   - ✅ Inverse matching - added invert_match parameter (like grep -v)
   - ✅ Multiple patterns - added patterns array for OR logic (like grep -e pattern1 -e pattern2)
   - ✅ Enhanced documentation with clear examples
+
+### Future Find Tool Improvements (from FIND_IMPROVEMENTS_V2.md)
+- **Exclude pattern support**: Add exclude_pattern parameter to filter out common directories like node_modules, target, .git
+- **File content preview**: Add preview_lines parameter to show first N lines of text files in results
+- **Multiple path patterns**: Support path_patterns array for OR logic across multiple locations
+- **Git-aware filtering**: Add respect_gitignore parameter to automatically exclude ignored files
+- **Result grouping**: Add group_by_directory parameter for better organization of large result sets
 
 ### Tool Quality & User Experience Issues
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.

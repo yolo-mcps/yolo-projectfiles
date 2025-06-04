@@ -19,23 +19,42 @@ const TOOL_NAME: &str = "find";
     name = "find",
     description = "Find files and directories within the project. Preferred over system 'find' command.
 
+IMPORTANT: At least one filter criteria should be provided for meaningful results.
+NOTE: Omit optional parameters when not needed, don't pass null.
+
 Parameters:
-- path: Start directory (default: \".\")
-- name_pattern: File name pattern (\"*.rs\", \"test_*.js\", \"*.{yml,yaml}\")
-- path_pattern: Path pattern (\"*/test/*\", \"src/**\", \"**/node_modules/**\")
-- type_filter: \"file\", \"directory\", or \"any\" (default)
-- size_filter: \"+1M\" (>1MB), \"-100K\" (<100KB), \"50K\" (exactly 50KB)
-- date_filter: \"-7d\" (last 7 days), \"+30d\" (>30 days ago), \"-1h\" (last hour)
-- output_format: \"detailed\" (default), \"names\" (paths only), \"compact\" (type+path)
-- max_results: Limit results (default: 1000)
-- max_depth: Directory depth limit
-- follow_symlinks: Follow symlinks during traversal (default: false)
+- path: Start directory (optional, default: \".\" - current directory)
+- name_pattern: File name pattern like \"*.rs\", \"test_*.js\", \"*.{yml,yaml}\" (optional)
+- path_pattern: Path pattern like \"*/test/*\", \"src/**\", \"**/node_modules/**\" (optional)
+- type_filter: \"file\", \"directory\", or \"any\" (optional, default: \"any\")
+- size_filter: \"+1M\" (>1MB), \"-100K\" (<100KB), \"50K\" (exactly 50KB) (optional)
+- date_filter: \"-7d\" (last 7 days), \"+30d\" (>30 days ago), \"-1h\" (last hour) (optional)
+- max_depth: Maximum directory depth to search (optional, unlimited by default)
+- follow_symlinks: Follow symlinks during traversal (optional, default: false)
+- follow_search_path: Follow symlinks for start directory (optional, default: true)
+- max_results: Maximum results to return (optional, default: 1000)
+- output_format: \"detailed\" (full info), \"names\" (paths only), \"compact\" (type+path) (optional, default: \"detailed\")
+
+Output formats:
+- \"detailed\": Full metadata with file sizes and summary
+- \"names\": Clean list of paths only (ideal for piping/processing)
+- \"compact\": Minimal info with file type indicators
 
 Examples:
-{\"name_pattern\": \"*.test.js\", \"path_pattern\": \"*/test/*\"} - Test files
-{\"name_pattern\": \"*.rs\", \"path_pattern\": \"src/**\", \"output_format\": \"names\"} - Rust source paths
-{\"date_filter\": \"-1d\", \"type_filter\": \"file\"} - Files modified today
-{\"size_filter\": \"+10M\", \"output_format\": \"names\"} - Large files paths only"
+- Find test files: {\"name_pattern\": \"*.test.js\", \"path_pattern\": \"*/test/*\"}
+- List Rust source files: {\"name_pattern\": \"*.rs\", \"path_pattern\": \"src/**\", \"output_format\": \"names\"}
+- Recent changes: {\"date_filter\": \"-1d\", \"type_filter\": \"file\"}
+- Large files: {\"size_filter\": \"+10M\", \"output_format\": \"names\"}
+- Config files: {\"name_pattern\": \"*.{json,yaml,toml}\", \"max_results\": 20}
+- Deep search: {\"path\": \"src\", \"name_pattern\": \"*.rs\", \"max_depth\": 3}
+
+Common use cases:
+- Test files: Use path_pattern \"*/test/*\" or \"**/test/**\"
+- Source files: Use path_pattern \"src/**\" with appropriate extension
+- Exclude directories: Use path_pattern to focus on specific areas
+- Quick file lists: Use output_format \"names\" for clean output
+
+Returns matching files and directories sorted by path."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FindTool {
@@ -867,6 +886,268 @@ mod tests {
             assert!(error_msg.contains("outside") || error_msg.contains("access") || error_msg.contains("not found"));
         }
         // If it succeeds, that's also valid (some implementations may handle this differently)
+    }
+    
+    #[tokio::test]
+    async fn test_find_by_path_pattern() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files in different directories
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir_all(project_root.join("src/test")).await.unwrap();
+        fs::create_dir_all(project_root.join("src/main")).await.unwrap();
+        fs::create_dir_all(project_root.join("test/integration")).await.unwrap();
+        
+        fs::write(project_root.join("src/test/test_file.rs"), "test content").await.unwrap();
+        fs::write(project_root.join("src/main/main_file.rs"), "main content").await.unwrap();
+        fs::write(project_root.join("test/integration/integration_test.rs"), "integration test").await.unwrap();
+        fs::write(project_root.join("regular_file.rs"), "regular content").await.unwrap();
+        
+        // Find files in test directories
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: Some("*.rs".to_string()),
+            path_pattern: Some("*/test/*".to_string()),
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should find only files in test directories
+            assert!(text.text.contains("test_file.rs"));
+            assert!(!text.text.contains("main_file.rs"));
+            assert!(!text.text.contains("regular_file.rs"));
+            // Path pattern should match differently than name pattern
+            assert!(text.text.contains("src/test/test_file.rs"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_output_formats() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("file2.txt"), "content2").await.unwrap();
+        fs::create_dir(project_root.join("dir1")).await.unwrap();
+        
+        // Test "names" output format
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: Some("*.txt".to_string()),
+            path_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "names".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should contain only file paths, no metadata
+            assert!(text.text.contains("file1.txt"));
+            assert!(text.text.contains("file2.txt"));
+            assert!(!text.text.contains("[FILE]"));
+            assert!(!text.text.contains("Found"));
+            assert!(!text.text.contains("KB"));
+        }
+        
+        // Test "compact" output format
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            path_pattern: None,
+            type_filter: "any".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "compact".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should contain type indicators but minimal info
+            assert!(text.text.contains("F file1.txt"));
+            assert!(text.text.contains("F file2.txt"));
+            assert!(text.text.contains("D dir1"));
+            assert!(!text.text.contains("Found"));
+            assert!(!text.text.contains("KB"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_date_filter() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("recent.txt"), "recent content").await.unwrap();
+        fs::write(project_root.join("old.txt"), "old content").await.unwrap();
+        
+        // Note: We can't reliably test date filters in unit tests because we can't
+        // easily set file modification times to specific past dates. 
+        // But we can test that the filter parses correctly and doesn't crash
+        
+        // Test parsing "-7d" filter
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            path_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: Some("-1h".to_string()), // Files modified in last hour
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // All files should be recent in tests
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("recent.txt"));
+            assert!(text.text.contains("old.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_combined_filters() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test structure
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir_all(project_root.join("src/test")).await.unwrap();
+        fs::create_dir_all(project_root.join("src/main")).await.unwrap();
+        
+        // Create files of different types and sizes
+        fs::write(project_root.join("src/test/small_test.rs"), "x").await.unwrap();
+        fs::write(project_root.join("src/test/large_test.rs"), "x".repeat(2048)).await.unwrap();
+        fs::write(project_root.join("src/main/main.rs"), "x".repeat(2048)).await.unwrap();
+        fs::write(project_root.join("src/test/test.txt"), "text file").await.unwrap();
+        
+        // Find only large .rs files in test directories
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: Some("*.rs".to_string()),
+            path_pattern: Some("*/test/*".to_string()),
+            type_filter: "file".to_string(),
+            size_filter: Some("+1K".to_string()),
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            // Should find only large_test.rs
+            assert!(text.text.contains("large_test.rs"));
+            assert!(!text.text.contains("small_test.rs")); // Too small
+            assert!(!text.text.contains("main.rs")); // Wrong path
+            assert!(!text.text.contains("test.txt")); // Wrong extension
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_find_invalid_parameters() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Test invalid type_filter
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            path_pattern: None,
+            type_filter: "invalid".to_string(),
+            size_filter: None,
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        // Should still work - "any" behavior for unknown type_filter
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Test invalid size filter
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            path_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: Some("invalid_size".to_string()),
+            date_filter: None,
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid size filter") || error_msg.contains("Invalid size number"));
+        
+        // Test invalid date filter
+        let find_tool = FindTool {
+            path: ".".to_string(),
+            name_pattern: None,
+            path_pattern: None,
+            type_filter: "file".to_string(),
+            size_filter: None,
+            date_filter: Some("invalid_date".to_string()),
+            max_depth: None,
+            follow_symlinks: false,
+            follow_search_path: true,
+            max_results: 1000,
+            output_format: "detailed".to_string(),
+        };
+        
+        let result = find_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("Invalid date filter") || error_msg.contains("must start with"));
     }
 }
 
