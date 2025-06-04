@@ -15,7 +15,36 @@ const TOOL_NAME: &str = "chmod";
 
 #[mcp_tool(
     name = "chmod", 
-    description = "Changes file/directory permissions within the project directory only. Unix-like systems only. Uses octal mode format (e.g., '755' for rwxr-xr-x, '644' for rw-r--r--). Supports recursive application for directories. Prefer this over system 'chmod' command when modifying project file permissions."
+    description = "Change file/directory permissions. Preferred over system 'chmod' command.
+
+IMPORTANT: Unix-like systems only. Requires octal permission format.
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- path: File or directory path (required)
+- mode: Octal permissions like \"755\", \"644\", \"600\" (required)
+- recursive: Apply to directory contents (optional, default: false)
+- pattern: Treat path as glob pattern for bulk operations (optional, default: false)
+
+Permission meanings:
+- 7 (rwx): Read, write, execute
+- 6 (rw-): Read, write
+- 5 (r-x): Read, execute
+- 4 (r--): Read only
+- 0 (---): No permissions
+
+Common modes:
+- \"755\": rwxr-xr-x (executable/directory)
+- \"644\": rw-r--r-- (regular file)
+- \"600\": rw------- (private file)
+- \"700\": rwx------ (private directory)
+
+Examples:
+- Make executable: {\"path\": \"script.sh\", \"mode\": \"755\"}
+- Secure private file: {\"path\": \"secrets.env\", \"mode\": \"600\"}
+- Fix directory permissions: {\"path\": \"src\", \"mode\": \"755\", \"recursive\": true}
+- Bulk chmod .sh files: {\"path\": \"*.sh\", \"mode\": \"755\", \"pattern\": true}
+- Private config files: {\"path\": \"config/*.json\", \"mode\": \"600\", \"pattern\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ChmodTool {
@@ -518,5 +547,60 @@ mod tests {
         let file_metadata = fs::metadata(dir_path.join("file.txt")).await.unwrap();
         let file_mode = file_metadata.permissions().mode() & 0o777;
         assert_ne!(file_mode, 0o700); // Should not be changed to 700
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_pattern_no_matches() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create some files that won't match the pattern
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file1.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("file2.txt"), "content2").await.unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "*.nonexistent".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: true,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("No files found matching pattern"));
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_symlink_handling() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create a file and a symlink to it
+        let project_root = context.get_project_root().unwrap();
+        let target_file = project_root.join("target.txt");
+        fs::write(&target_file, "content").await.unwrap();
+        
+        let symlink_path = project_root.join("link.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target_file, &symlink_path).unwrap();
+        
+        let chmod_tool = ChmodTool {
+            path: "link.txt".to_string(),
+            mode: "600".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check that the target file's permissions were changed
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(&target_file).await.unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
