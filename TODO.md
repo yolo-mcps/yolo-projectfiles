@@ -31,6 +31,12 @@ cargo install --path crates/mcp-projectfiles-bin
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.
 - **Inconsistent parameter documentation**: Tool descriptions inconsistently mark which parameters are optional. Some tools clearly mark "(optional)" while others don't. Need to standardize this across all tools for better usability. Example: grep now marks all optional params, but read, find, edit don't.
 - **copy tool documentation improved**: Updated copy tool documentation to match the patterns of edit, grep, and list tools with clear parameter descriptions, examples, and features. Added comprehensive test coverage including edge cases like copying directories into themselves, handling special characters, and large files.
+- **delete tool documentation**: The delete tool needs documentation improvements to match the patterns of edit, grep, list, and copy tools. Current issues:
+  - mcp_tool description is too brief and lacks structure compared to other tools
+  - Missing clear parameter documentation section with "(optional)" markings
+  - No examples section showing common use cases
+  - Lacks detailed feature list explaining capabilities
+  - Should follow the structure: brief intro, IMPORTANT notes, NOTE about optional params, Parameters list, Features list, Examples
 
 ### Grep Tool Future Improvements (Phase 2 & 3 from GREP_IMPROVEMENTS.md)
 - **Performance**: Implement streaming file reader to avoid loading entire files into memory
