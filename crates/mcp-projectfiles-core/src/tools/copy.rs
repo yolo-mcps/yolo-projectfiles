@@ -15,7 +15,31 @@ const TOOL_NAME: &str = "copy";
 
 #[mcp_tool(
     name = "copy", 
-    description = "Copies files/directories recursively within the project directory only. Preserves directory structure and supports metadata preservation (default: true). Supports overwrite option (default: false). Creates destination parent directories if needed. Prefer this over system 'cp' command when copying project files."
+    description = "Copy files and directories. Preferred over system 'cp' command.
+
+IMPORTANT: Recursive directory copying with structure preservation.
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- source: Source path (required)
+- destination: Destination path (required)
+- overwrite: Replace existing files (optional, default: false)
+- preserve_metadata: Keep timestamps/permissions (optional, default: true)
+
+Features:
+- Copies files and directories recursively
+- Creates parent directories automatically
+- Preserves directory structure
+- Validates paths stay within project boundaries
+- Prevents copying directory into itself
+
+Examples:
+- Copy file: {\"source\": \"config.json\", \"destination\": \"config.backup.json\"}
+- Copy directory: {\"source\": \"src/\", \"destination\": \"src_backup/\"}
+- Overwrite existing: {\"source\": \"new.txt\", \"destination\": \"old.txt\", \"overwrite\": true}
+- Copy to subdirectory: {\"source\": \"file.txt\", \"destination\": \"backup/file.txt\"}
+
+Returns success message with file count and total size."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct CopyTool {
@@ -561,5 +585,158 @@ mod tests {
         
         let content = fs::read_to_string(&dest_path).await.unwrap();
         assert_eq!(content, "");
+    }
+    
+    #[tokio::test]
+    async fn test_copy_directory_into_itself_fails() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source directory
+        let project_root = context.get_project_root().unwrap();
+        let source_dir = project_root.join("source_dir");
+        fs::create_dir(&source_dir).await.unwrap();
+        fs::write(source_dir.join("file.txt"), "Content").await.unwrap();
+        
+        let copy_tool = CopyTool {
+            source: "source_dir".to_string(),
+            destination: "source_dir/subdest".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+        };
+        
+        let result = copy_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("into itself"));
+    }
+    
+    #[tokio::test]
+    async fn test_copy_directory_with_nested_empty_dirs() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source directory with nested empty directories
+        let project_root = context.get_project_root().unwrap();
+        let source_dir = project_root.join("source_dir");
+        let empty_dir1 = source_dir.join("empty1");
+        let empty_dir2 = source_dir.join("nested/empty2");
+        
+        fs::create_dir(&source_dir).await.unwrap();
+        fs::create_dir(&empty_dir1).await.unwrap();
+        fs::create_dir_all(&empty_dir2).await.unwrap();
+        fs::write(source_dir.join("file.txt"), "Content").await.unwrap();
+        
+        let copy_tool = CopyTool {
+            source: "source_dir".to_string(),
+            destination: "dest_dir".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+        };
+        
+        let result = copy_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check that empty directories were created
+        let dest_dir = project_root.join("dest_dir");
+        let dest_empty1 = dest_dir.join("empty1");
+        let dest_empty2 = dest_dir.join("nested/empty2");
+        
+        assert!(dest_empty1.exists() && dest_empty1.is_dir());
+        assert!(dest_empty2.exists() && dest_empty2.is_dir());
+        assert!(dest_dir.join("file.txt").exists());
+    }
+    
+    #[tokio::test]
+    async fn test_copy_file_with_special_characters() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source file with special characters in name
+        let project_root = context.get_project_root().unwrap();
+        let special_name = "file with spaces & special-chars!.txt";
+        fs::write(project_root.join(special_name), "Special content").await.unwrap();
+        
+        let copy_tool = CopyTool {
+            source: special_name.to_string(),
+            destination: "copy of special file.txt".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+        };
+        
+        let result = copy_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file was copied
+        let dest_path = project_root.join("copy of special file.txt");
+        assert!(dest_path.exists());
+        
+        let content = fs::read_to_string(&dest_path).await.unwrap();
+        assert_eq!(content, "Special content");
+    }
+    
+    #[tokio::test]
+    async fn test_copy_large_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create a "large" file (1MB for testing)
+        let project_root = context.get_project_root().unwrap();
+        let large_content = "x".repeat(1024 * 1024); // 1MB
+        fs::write(project_root.join("large.txt"), &large_content).await.unwrap();
+        
+        let copy_tool = CopyTool {
+            source: "large.txt".to_string(),
+            destination: "large_copy.txt".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+        };
+        
+        let result = copy_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Verify the copy succeeded and has correct size
+        let dest_path = project_root.join("large_copy.txt");
+        assert!(dest_path.exists());
+        
+        let metadata = fs::metadata(&dest_path).await.unwrap();
+        assert_eq!(metadata.len() as usize, large_content.len());
+    }
+    
+    #[tokio::test]
+    async fn test_copy_directory_overwrite_with_existing_files() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let project_root = context.get_project_root().unwrap();
+        
+        // Create source directory
+        let source_dir = project_root.join("source");
+        fs::create_dir(&source_dir).await.unwrap();
+        fs::write(source_dir.join("file1.txt"), "New content 1").await.unwrap();
+        fs::write(source_dir.join("file2.txt"), "New content 2").await.unwrap();
+        
+        // Create destination directory with existing files
+        let dest_dir = project_root.join("dest");
+        fs::create_dir(&dest_dir).await.unwrap();
+        fs::write(dest_dir.join("file1.txt"), "Old content 1").await.unwrap();
+        fs::write(dest_dir.join("file3.txt"), "Existing file 3").await.unwrap();
+        
+        let copy_tool = CopyTool {
+            source: "source".to_string(),
+            destination: "dest".to_string(),
+            overwrite: true,
+            preserve_metadata: true,
+        };
+        
+        let result = copy_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check files were overwritten/merged correctly
+        let file1_content = fs::read_to_string(dest_dir.join("file1.txt")).await.unwrap();
+        assert_eq!(file1_content, "New content 1");
+        
+        let file2_content = fs::read_to_string(dest_dir.join("file2.txt")).await.unwrap();
+        assert_eq!(file2_content, "New content 2");
+        
+        // Original file3 should still exist
+        let file3_content = fs::read_to_string(dest_dir.join("file3.txt")).await.unwrap();
+        assert_eq!(file3_content, "Existing file 3");
     }
 }

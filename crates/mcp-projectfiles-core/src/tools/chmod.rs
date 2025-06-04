@@ -603,4 +603,183 @@ mod tests {
         let mode = metadata.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_invalid_octal_modes() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("test.txt"), "content").await.unwrap();
+        
+        // Test various invalid modes
+        let invalid_modes = vec!["888", "999", "77a", "abc", "-755", "0x644"];
+        
+        for mode in invalid_modes {
+            let chmod_tool = ChmodTool {
+                path: "test.txt".to_string(),
+                mode: mode.to_string(),
+                recursive: false,
+                pattern: false,
+            };
+            
+            let result = chmod_tool.call_with_context(&context).await;
+            assert!(result.is_err(), "Mode '{}' should be invalid", mode);
+            
+            let error_msg = format!("{:?}", result.unwrap_err());
+            assert!(error_msg.contains("Invalid mode") || error_msg.contains("octal"), 
+                   "Error for mode '{}' should mention invalid mode or octal", mode);
+        }
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_edge_case_modes() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create test file
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("test.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        // Test edge case modes
+        let edge_modes = vec![("000", 0o000), ("777", 0o777), ("111", 0o111), ("666", 0o666)];
+        
+        for (mode_str, expected_mode) in edge_modes {
+            let chmod_tool = ChmodTool {
+                path: "test.txt".to_string(),
+                mode: mode_str.to_string(),
+                recursive: false,
+                pattern: false,
+            };
+            
+            let result = chmod_tool.call_with_context(&context).await;
+            assert!(result.is_ok(), "Mode '{}' should be valid", mode_str);
+            
+            // Verify the mode was set correctly
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = fs::metadata(&file_path).await.unwrap();
+            let actual_mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(actual_mode, expected_mode, 
+                      "Mode should be {} but was {:o}", mode_str, actual_mode);
+        }
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_complex_glob_patterns() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create complex directory structure
+        let project_root = context.get_project_root().unwrap();
+        fs::create_dir_all(project_root.join("src/scripts")).await.unwrap();
+        fs::create_dir_all(project_root.join("test/scripts")).await.unwrap();
+        fs::create_dir_all(project_root.join("docs")).await.unwrap();
+        
+        // Create various script files
+        fs::write(project_root.join("src/scripts/build.sh"), "#!/bin/bash").await.unwrap();
+        fs::write(project_root.join("src/scripts/test.sh"), "#!/bin/bash").await.unwrap();
+        fs::write(project_root.join("test/scripts/e2e.sh"), "#!/bin/bash").await.unwrap();
+        fs::write(project_root.join("docs/example.sh"), "#!/bin/bash").await.unwrap();
+        fs::write(project_root.join("src/scripts/config.json"), "{}").await.unwrap();
+        
+        // Test pattern matching only .sh files in specific directories
+        let chmod_tool = ChmodTool {
+            path: "*/scripts/*.sh".to_string(),
+            mode: "755".to_string(),
+            recursive: false,
+            pattern: true,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Verify correct files were changed
+        use std::os::unix::fs::PermissionsExt;
+        
+        // These should be executable
+        let executable_files = vec![
+            "src/scripts/build.sh",
+            "src/scripts/test.sh",
+            "test/scripts/e2e.sh",
+        ];
+        
+        for file in executable_files {
+            let metadata = fs::metadata(project_root.join(file)).await.unwrap();
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755, "File {} should have mode 755", file);
+        }
+        
+        // The docs file should not be changed (doesn't match pattern)
+        let docs_metadata = fs::metadata(project_root.join("docs/example.sh")).await.unwrap();
+        let docs_mode = docs_metadata.permissions().mode() & 0o777;
+        assert_ne!(docs_mode, 0o755, "docs/example.sh should not have been changed");
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_read_only_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create a file and make it read-only
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("readonly.txt");
+        fs::write(&file_path, "content").await.unwrap();
+        
+        // First set it to read-only
+        use std::os::unix::fs::PermissionsExt;
+        let readonly_perms = std::fs::Permissions::from_mode(0o444);
+        fs::set_permissions(&file_path, readonly_perms).await.unwrap();
+        
+        // Try to change permissions (this should succeed as chmod can change read-only files)
+        let chmod_tool = ChmodTool {
+            path: "readonly.txt".to_string(),
+            mode: "644".to_string(),
+            recursive: false,
+            pattern: false,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok(), "Should be able to chmod read-only files");
+        
+        // Verify permissions were changed
+        let metadata = fs::metadata(&file_path).await.unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+    }
+    
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_chmod_pattern_with_spaces_in_filename() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create files with spaces in names
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file with spaces.txt"), "content1").await.unwrap();
+        fs::write(project_root.join("another file.txt"), "content2").await.unwrap();
+        fs::write(project_root.join("normal.txt"), "content3").await.unwrap();
+        
+        // Use pattern to match files with spaces
+        let chmod_tool = ChmodTool {
+            path: "*with*.txt".to_string(),
+            mode: "600".to_string(),
+            recursive: false,
+            pattern: true,
+        };
+        
+        let result = chmod_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Verify the file with spaces was changed
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(project_root.join("file with spaces.txt")).await.unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        
+        // Verify other files weren't changed
+        let normal_metadata = fs::metadata(project_root.join("normal.txt")).await.unwrap();
+        let normal_mode = normal_metadata.permissions().mode() & 0o777;
+        assert_ne!(normal_mode, 0o600);
+    }
 }
