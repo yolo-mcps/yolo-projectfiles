@@ -33,6 +33,14 @@ cargo install --path crates/mcp-projectfiles-bin
 - **copy tool documentation improved**: Updated copy tool documentation to match the patterns of edit, grep, and list tools with clear parameter descriptions, examples, and features. Added comprehensive test coverage including edge cases like copying directories into themselves, handling special characters, and large files.
 - **delete tool documentation improved**: Updated delete tool documentation to match the patterns of edit, grep, and list tools. Added comprehensive parameter documentation with "(optional)" markers, examples section, and 4 additional test cases for edge cases.
 - **diff tool documentation improved**: Enhanced diff tool documentation with structured format, clear parameter descriptions, and comprehensive examples. The tool already has excellent test coverage (20 tests) including symlink handling, whitespace ignoring, and various edge cases.
+- **exists tool improvements completed**: 
+  - ✅ Updated documentation to follow the standardized pattern of edit, grep, and list tools
+  - ✅ Added structured description with NOTE about omitting optional parameters
+  - ✅ Added "(optional)" markers to parameter documentation
+  - ✅ Added Parameters, Features, Examples, and Returns sections
+  - ✅ Added include_metadata parameter for optional size/permissions/timestamps
+  - ✅ Added 3 new tests (metadata with/without, nested paths) - total 11 tests
+  - ✅ The tool now provides more value for agentic LLMs with metadata support
 
 ### Grep Tool Future Improvements (Phase 2 & 3 from GREP_IMPROVEMENTS.md)
 - **Performance**: Implement streaming file reader to avoid loading entire files into memory
