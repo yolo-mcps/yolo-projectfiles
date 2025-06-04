@@ -16,7 +16,32 @@ const TOOL_NAME: &str = "move";
 
 #[mcp_tool(
     name = "move", 
-    description = "Moves or renames files/directories within the project directory only. Preserves file tracking state for read/write operations. Supports overwrite option (default: false). Creates destination parent directories if needed. Prefer this over system 'mv' command when moving project files."
+    description = "Move or rename files and directories. Preferred over system 'mv' command.
+
+IMPORTANT: Paths are restricted to project directory for safety.
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- source: Source path to move (required)
+- destination: Destination path (required)
+- overwrite: Replace existing files (optional, default: false)
+- preserve_metadata: Keep timestamps/permissions (optional, default: true)
+- dry_run: Preview move without executing (optional, default: false)
+
+Examples:
+- Rename file: {\"source\": \"old.txt\", \"destination\": \"new.txt\"}
+- Move to directory: {\"source\": \"file.txt\", \"destination\": \"archive/file.txt\"}
+- Move directory: {\"source\": \"src/old\", \"destination\": \"src/new\"}
+- Force overwrite: {\"source\": \"temp.txt\", \"destination\": \"final.txt\", \"overwrite\": true}
+- Preview move: {\"source\": \"important.db\", \"destination\": \"backup/important.db\", \"dry_run\": true}
+- Quick rename: {\"source\": \"draft.md\", \"destination\": \"README.md\", \"preserve_metadata\": false}
+
+Returns success message with:
+- File/directory type moved
+- Source and destination paths
+- Size information (for files)
+- Metadata preservation status
+- Dry run indication if applicable"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct MoveTool {
@@ -30,10 +55,30 @@ pub struct MoveTool {
     /// Whether to preserve file metadata (timestamps, permissions) (default: true)
     #[serde(default = "default_true")]
     pub preserve_metadata: bool,
+    /// Perform a dry run - show what would be moved without actually moving (default: false)
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+/// Calculate the total size of a directory recursively
+async fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
+    let mut total_size = 0u64;
+    let mut entries = fs::read_dir(path).await?;
+    
+    while let Some(entry) = entries.next_entry().await? {
+        let metadata = entry.metadata().await?;
+        if metadata.is_dir() {
+            total_size += Box::pin(calculate_dir_size(&entry.path())).await?;
+        } else {
+            total_size += metadata.len();
+        }
+    }
+    
+    Ok(total_size)
 }
 
 #[async_trait]
@@ -73,7 +118,7 @@ impl StatefulTool for MoveTool {
         };
         
         // For destination, we can't canonicalize if it doesn't exist yet
-        let canonical_dest = if absolute_dest.exists() {
+        let mut canonical_dest = if absolute_dest.exists() {
             absolute_dest.canonicalize()
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve destination path '{}': {}", self.destination, e))))?
         } else {
@@ -100,12 +145,53 @@ impl StatefulTool for MoveTool {
             )));
         }
         
+        // Get source metadata early for validation
+        let source_metadata = fs::metadata(&canonical_source).await
+            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?;
+        
         // Check if destination exists
-        if canonical_dest.exists() && !self.overwrite {
-            return Err(CallToolError::from(tool_errors::invalid_input(
-                TOOL_NAME,
-                &format!("Destination '{}' already exists. Set overwrite=true to replace it.", self.destination)
-            )));
+        if canonical_dest.exists() {
+            let dest_metadata = fs::metadata(&canonical_dest).await
+                .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read destination metadata: {}", e))))?;
+            
+            // If destination is a directory and source is a file, assume user wants to move file into directory
+            if dest_metadata.is_dir() && !source_metadata.is_dir() {
+                // Extract filename from source and append to destination
+                let file_name = canonical_source.file_name()
+                    .ok_or_else(|| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, "Source path has no filename")))?;
+                
+                let new_dest = canonical_dest.join(file_name);
+                
+                // Check if the file already exists in the target directory
+                if new_dest.exists() && !self.overwrite {
+                    let new_dest_relative = new_dest.strip_prefix(&current_dir)
+                        .unwrap_or(&new_dest);
+                    
+                    return Err(CallToolError::from(tool_errors::invalid_input(
+                        TOOL_NAME,
+                        &format!("File '{}' already exists in target directory. Use 'destination: \"{}\"' or set overwrite=true.", 
+                            new_dest_relative.display(), 
+                            new_dest_relative.display())
+                    )));
+                }
+                
+                // Update canonical_dest to include the filename
+                canonical_dest = new_dest;
+            } else if !self.overwrite {
+                // Destination exists and is not a directory, or both are directories
+                let dest_type = if dest_metadata.is_dir() { "directory" } else { "file" };
+                let dest_size = if !dest_metadata.is_dir() { 
+                    format!(" ({})", format_size(dest_metadata.len())) 
+                } else { 
+                    String::new() 
+                };
+                
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    &format!("Destination {} '{}'{} already exists. Set overwrite=true to replace it.", 
+                        dest_type, self.destination, dest_size)
+                )));
+            }
         }
         
         // Create parent directory if needed
@@ -118,63 +204,82 @@ impl StatefulTool for MoveTool {
         // Track operation start time
         let start_time = Instant::now();
         
-        // Get metadata before move
-        let metadata = fs::metadata(&canonical_source).await
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to read source metadata: {}", e))))?;
-        
-        let is_dir = metadata.is_dir();
+        let is_dir = source_metadata.is_dir();
         let total_size = if is_dir {
-            // For directories, we'll just indicate it's a directory
-            0u64
+            // For directories, we'll calculate total size if in dry run
+            if self.dry_run {
+                calculate_dir_size(&canonical_source).await.unwrap_or(0)
+            } else {
+                0u64
+            }
         } else {
-            metadata.len()
+            source_metadata.len()
         };
         
-        // Perform the move
-        fs::rename(&canonical_source, &canonical_dest)
-            .await
-            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to move file: {}", e))))?;
-        
-        // Restore metadata if requested
-        if self.preserve_metadata {
-            // Set file times (modified and accessed)
-            if let Ok(modified) = metadata.modified() {
-                let _ = filetime::set_file_mtime(&canonical_dest, 
-                    filetime::FileTime::from_system_time(modified));
-            }
-            if let Ok(accessed) = metadata.accessed() {
-                let _ = filetime::set_file_atime(&canonical_dest, 
-                    filetime::FileTime::from_system_time(accessed));
+        // Perform the move or simulate it for dry run
+        if !self.dry_run {
+            fs::rename(&canonical_source, &canonical_dest)
+                .await
+                .map_err(|e| {
+                    // Provide more context about the failure
+                    let error_context = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        "Permission denied. Check file permissions and ownership."
+                    } else if e.kind() == std::io::ErrorKind::NotFound {
+                        "Source file was removed or destination parent directory doesn't exist."
+                    } else if cfg!(target_os = "windows") && e.raw_os_error() == Some(17) {
+                        "Cross-device move not supported. Source and destination must be on the same drive."
+                    } else if cfg!(unix) && e.raw_os_error() == Some(18) {
+                        "Cross-device move not supported. Source and destination must be on the same filesystem."
+                    } else {
+                        "Operation failed. This might be due to filesystem limitations or permissions."
+                    };
+                    
+                    CallToolError::from(tool_errors::invalid_input(TOOL_NAME, 
+                        &format!("Failed to move '{}' to '{}': {} {}", 
+                            self.source, self.destination, e, error_context)))
+                })?;
+            
+            // Restore metadata if requested
+            if self.preserve_metadata {
+                // Set file times (modified and accessed)
+                if let Ok(modified) = source_metadata.modified() {
+                    let _ = filetime::set_file_mtime(&canonical_dest, 
+                        filetime::FileTime::from_system_time(modified));
+                }
+                if let Ok(accessed) = source_metadata.accessed() {
+                    let _ = filetime::set_file_atime(&canonical_dest, 
+                        filetime::FileTime::from_system_time(accessed));
+                }
+                
+                // Set permissions on Unix-like systems
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&canonical_dest, 
+                        std::fs::Permissions::from_mode(source_metadata.permissions().mode())).await;
+                }
             }
             
-            // Set permissions on Unix-like systems
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&canonical_dest, 
-                    std::fs::Permissions::from_mode(metadata.permissions().mode())).await;
+            // Update tracking in context
+            // Remove source from read/written files
+            let read_files = context.get_custom_state::<HashSet<PathBuf>>().await
+                .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+            let mut read_files_clone = (*read_files).clone();
+            
+            let written_files = context.get_custom_state::<HashSet<PathBuf>>().await
+                .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
+            let mut written_files_clone = (*written_files).clone();
+            
+            // If source was tracked, track destination instead
+            if read_files_clone.remove(&canonical_source) {
+                read_files_clone.insert(canonical_dest.clone());
+                context.set_custom_state(read_files_clone).await;
             }
-        }
-        
-        // Update tracking in context
-        // Remove source from read/written files
-        let read_files = context.get_custom_state::<HashSet<PathBuf>>().await
-            .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
-        let mut read_files_clone = (*read_files).clone();
-        
-        let written_files = context.get_custom_state::<HashSet<PathBuf>>().await
-            .unwrap_or_else(|| std::sync::Arc::new(HashSet::new()));
-        let mut written_files_clone = (*written_files).clone();
-        
-        // If source was tracked, track destination instead
-        if read_files_clone.remove(&canonical_source) {
-            read_files_clone.insert(canonical_dest.clone());
-            context.set_custom_state(read_files_clone).await;
-        }
-        
-        if written_files_clone.remove(&canonical_source) {
-            written_files_clone.insert(canonical_dest.clone());
-            context.set_custom_state(written_files_clone).await;
+            
+            if written_files_clone.remove(&canonical_source) {
+                written_files_clone.insert(canonical_dest.clone());
+                context.set_custom_state(written_files_clone).await;
+            }
         }
         
         let _duration = start_time.elapsed();
@@ -201,13 +306,23 @@ impl StatefulTool for MoveTool {
             String::new()
         };
         
-        let message = format!(
-            "Moved {} {} to {}{}",
-            file_type,
-            format_path(source_relative),
-            format_path(dest_relative),
-            metrics
-        );
+        let message = if self.dry_run {
+            format!(
+                "[DRY RUN] Would move {} {} to {}{}",
+                file_type,
+                format_path(source_relative),
+                format_path(dest_relative),
+                metrics
+            )
+        } else {
+            format!(
+                "Moved {} {} to {}{}",
+                file_type,
+                format_path(source_relative),
+                format_path(dest_relative),
+                metrics
+            )
+        };
 
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
@@ -256,6 +371,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -285,6 +401,7 @@ mod tests {
             destination: "new_name.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -312,6 +429,7 @@ mod tests {
             destination: "subdir/file.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -341,6 +459,7 @@ mod tests {
             destination: "dest_dir".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -377,6 +496,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: true,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -404,6 +524,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -431,6 +552,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -453,6 +575,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: false,
             preserve_metadata: false,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -488,6 +611,7 @@ mod tests {
             destination: "dest.txt".to_string(),
             overwrite: false,
             preserve_metadata: true,
+            dry_run: false,
         };
         
         let result = move_tool.call_with_context(&context).await;
@@ -498,5 +622,131 @@ mod tests {
         assert!(project_root.join("dest.txt").exists());
         
         // Tracking state update is tested implicitly by the move succeeding
+    }
+    
+    #[tokio::test]
+    async fn test_move_dry_run() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source file
+        let project_root = context.get_project_root().unwrap();
+        let source_path = project_root.join("source.txt");
+        let content = "Test content";
+        fs::write(&source_path, content).await.unwrap();
+        
+        let move_tool = MoveTool {
+            source: "source.txt".to_string(),
+            destination: "dest.txt".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+            dry_run: true,
+        };
+        
+        let result = move_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check result contains dry run indication
+        let result_str = format!("{:?}", result.unwrap());
+        assert!(result_str.contains("DRY RUN") || result_str.contains("Would move"));
+        
+        // Source should still exist (not moved)
+        assert!(source_path.exists());
+        
+        // Destination should not exist
+        assert!(!project_root.join("dest.txt").exists());
+        
+        // Verify content is unchanged
+        let source_content = fs::read_to_string(&source_path).await.unwrap();
+        assert_eq!(source_content, content);
+    }
+    
+    #[tokio::test]
+    async fn test_move_dry_run_with_overwrite() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source and destination files
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("source.txt"), "New content").await.unwrap();
+        fs::write(project_root.join("dest.txt"), "Old content").await.unwrap();
+        
+        let move_tool = MoveTool {
+            source: "source.txt".to_string(),
+            destination: "dest.txt".to_string(),
+            overwrite: true,
+            preserve_metadata: true,
+            dry_run: true,
+        };
+        
+        let result = move_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Both files should still exist unchanged
+        assert!(project_root.join("source.txt").exists());
+        assert!(project_root.join("dest.txt").exists());
+        
+        let source_content = fs::read_to_string(project_root.join("source.txt")).await.unwrap();
+        let dest_content = fs::read_to_string(project_root.join("dest.txt")).await.unwrap();
+        assert_eq!(source_content, "New content");
+        assert_eq!(dest_content, "Old content");
+    }
+    
+    #[tokio::test]
+    async fn test_move_file_to_existing_directory() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source file and destination directory
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file.txt"), "Content").await.unwrap();
+        fs::create_dir(project_root.join("destdir")).await.unwrap();
+        
+        let move_tool = MoveTool {
+            source: "file.txt".to_string(),
+            destination: "destdir".to_string(),  // Directory without filename
+            overwrite: false,
+            preserve_metadata: true,
+            dry_run: false,
+        };
+        
+        let result = move_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // File should be moved into the directory
+        assert!(!project_root.join("file.txt").exists());
+        assert!(project_root.join("destdir/file.txt").exists());
+        
+        let content = fs::read_to_string(project_root.join("destdir/file.txt")).await.unwrap();
+        assert_eq!(content, "Content");
+    }
+    
+    #[tokio::test]
+    async fn test_move_file_to_directory_with_existing_file() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Create source file, destination directory, and existing file in directory
+        let project_root = context.get_project_root().unwrap();
+        fs::write(project_root.join("file.txt"), "New content").await.unwrap();
+        fs::create_dir(project_root.join("destdir")).await.unwrap();
+        fs::write(project_root.join("destdir/file.txt"), "Old content").await.unwrap();
+        
+        let move_tool = MoveTool {
+            source: "file.txt".to_string(),
+            destination: "destdir".to_string(),
+            overwrite: false,
+            preserve_metadata: true,
+            dry_run: false,
+        };
+        
+        let result = move_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("already exists in target directory"));
+        
+        // Source file should still exist
+        assert!(project_root.join("file.txt").exists());
+        
+        // Existing file should be unchanged
+        let existing_content = fs::read_to_string(project_root.join("destdir/file.txt")).await.unwrap();
+        assert_eq!(existing_content, "Old content");
     }
 }

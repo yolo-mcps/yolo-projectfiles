@@ -35,6 +35,17 @@
 - Includes integration tests for basic functionality
 - **Requires restart to use the new tool**
 
+### Move Tool Enhancements
+
+- Enhanced documentation with detailed mcp_tool description matching edit/find/file tools
+- Added dry_run parameter for safe preview of moves
+- Improved error handling with detailed context about failures
+- Added intelligent handling when moving files to directories
+  - Automatically appends filename when destination is existing directory
+  - Provides helpful error messages for conflicts
+- Added comprehensive tests for all new features
+- **Requires restart to use the enhanced tool**
+
 ## High Priority
 
 ### Documentation Updates Needed
@@ -62,3 +73,10 @@
 - [ ] Consider consolidating the read tool's parameters
 
 ## Post-Restart Testing
+
+### Move Tool Testing
+- [ ] Test basic move operations after restart
+- [ ] Test dry_run functionality with various scenarios
+- [ ] Test moving files to existing directories
+- [ ] Test error messages for permission denied and cross-device moves
+- [ ] Verify the enhanced documentation is properly displayed

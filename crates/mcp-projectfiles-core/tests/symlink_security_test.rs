@@ -246,6 +246,7 @@ async fn test_move_tool_blocks_symlink_source() {
         destination: "moved.txt".to_string(),
         overwrite: false,
         preserve_metadata: true,
+        dry_run: false,
     };
     
     let result = move_tool.call_with_context(&context).await;
