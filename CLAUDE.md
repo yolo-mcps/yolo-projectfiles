@@ -107,3 +107,7 @@ The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI pa
 - Any time you invoke Bash or the out-of-the-box tools, think about why you chose those tools instead of those provided in this MCP server, and make suggestions in TODO.md. You should always be seeking to self-improve these tools.
 - Any time you implement new tools, write unit/integration tests as appropriate, and then add a task in TODO.md to test the new feature after recompiling and restarting our session.
 - Always keep our TODO.md list maintained around the requirements for recompiling and restarting our sessions to enable continuation of work. In other words, manage your memory in the TODO.md.
+
+## Development Memories
+
+- Use `test-files` directory when creating test files or scripts

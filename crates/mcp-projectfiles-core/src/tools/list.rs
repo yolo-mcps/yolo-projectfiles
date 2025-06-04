@@ -19,16 +19,30 @@ const TOOL_NAME: &str = "list";
     name = "list",
     description = "List directory contents. Preferred over system 'ls' command.
 
+NOTE: Omit optional parameters when not needed, don't pass null.
+
 Parameters:
 - path: Directory path (required)
-- recursive: List subdirectories (default: false)
-- sort_by: \"name\" (default), \"size\", \"modified\"
-- show_hidden: Include hidden files (default: false)
-- show_metadata: Include size/permissions/time (default: false)
-- filter: File pattern filter (e.g., \"*.rs\")
-- follow_symlinks: Follow symlinks (default: true)
+- recursive: List subdirectories recursively (optional, default: false)
+- sort_by: Sort order - \"name\", \"size\", or \"modified\" (optional, default: \"name\")
+- show_hidden: Include hidden files starting with '.' (optional, default: false)
+- show_metadata: Include size/permissions/timestamps (optional, default: false)
+- filter: File name pattern, e.g., \"*.rs\", \"*.{js,ts}\", \"test_*\" (optional)
+- follow_symlinks: Follow symlinks to list outside project (optional, default: true)
 
-Returns files/directories with [FILE] or [DIR] prefix."
+Output format:
+- Files shown as: [FILE] filename
+- Directories shown as: [DIR] dirname
+- With metadata: [TYPE] size permissions modified_time name
+
+Examples:
+- List current directory: {\"path\": \".\"}
+- List with hidden files: {\"path\": \".\", \"show_hidden\": true}
+- List only .rs files: {\"path\": \"src\", \"filter\": \"*.rs\"}
+- Recursive with metadata: {\"path\": \".\", \"recursive\": true, \"show_metadata\": true}
+- Sort by size: {\"path\": \".\", \"sort_by\": \"size\"}
+
+For advanced search with path patterns or result limits, use the 'find' tool."
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ListTool {
