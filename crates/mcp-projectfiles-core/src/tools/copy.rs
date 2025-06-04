@@ -137,8 +137,50 @@ impl StatefulTool for CopyTool {
                         )));
                     }
                 } else {
-                    // Parent doesn't exist yet, will be created, but check the path
-                    absolute_dest.clone()
+                    // Parent doesn't exist yet, need to check each component
+                    // Walk up the path to find the first existing parent
+                    let mut current = parent;
+                    let mut components_to_create = vec![];
+                    
+                    while !current.exists() {
+                        if let Some(parent_of_current) = current.parent() {
+                            components_to_create.push(current);
+                            current = parent_of_current;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // Now current is the first existing ancestor
+                    if current.exists() {
+                        let canonical_existing = current.canonicalize()
+                            .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to resolve existing parent: {}", e))))?;
+                        
+                        // Check if the existing parent is within project
+                        if !canonical_existing.starts_with(&project_root) {
+                            return Err(CallToolError::from(tool_errors::access_denied(
+                                TOOL_NAME,
+                                &self.destination,
+                                "Destination path would be outside the project directory"
+                            )));
+                        }
+                        
+                        // Reconstruct the full path
+                        let mut result = canonical_existing;
+                        for component in components_to_create.iter().rev() {
+                            if let Some(file_name) = component.file_name() {
+                                result = result.join(file_name);
+                            }
+                        }
+                        if let Some(file_name) = absolute_dest.file_name() {
+                            result.join(file_name)
+                        } else {
+                            result
+                        }
+                    } else {
+                        // No existing parent found, use absolute dest
+                        absolute_dest.clone()
+                    }
                 }
             } else {
                 return Err(CallToolError::from(tool_errors::invalid_input(

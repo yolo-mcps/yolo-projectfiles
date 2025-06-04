@@ -1,4 +1,4 @@
-use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool, FindTool, TreeTool, StatTool, ExistsTool};
+use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool, FindTool, TreeTool, StatTool, ExistsTool, LsofTool};
 use mcp_projectfiles_core::context::ToolContext;
 use mcp_projectfiles_core::StatefulTool;
 use mcp_projectfiles_core::protocol::CallToolResultContentItem;
@@ -492,6 +492,8 @@ async fn test_kill_tool_no_longer_requires_confirmation() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -512,6 +514,8 @@ async fn test_kill_tool_requires_pid_or_pattern() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -531,6 +535,8 @@ async fn test_kill_tool_invalid_signal() {
         signal: Some("INVALID".to_string()),
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -553,6 +559,8 @@ async fn test_kill_tool_valid_signals() {
             signal: Some(signal.to_string()),
             dry_run: false,
             max_processes: None,
+            preview_only: false,
+            force_confirmation: false,
         };
         
         let result = tool.call_with_context(&context).await;
@@ -575,6 +583,8 @@ async fn test_kill_tool_nonexistent_pid() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -594,6 +604,8 @@ async fn test_kill_tool_default_behavior() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -614,6 +626,8 @@ async fn test_kill_tool_pattern_no_matches() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -634,6 +648,8 @@ async fn test_kill_tool_max_processes_default() {
         signal: None,
         dry_run: false,
         max_processes: None, // Should default to 10
+        preview_only: false,
+        force_confirmation: false,
     };
     
     // This will fail because no processes match, but we're testing the parameter handling
@@ -652,6 +668,8 @@ async fn test_kill_tool_dry_run_mode() {
         signal: None,
         dry_run: true,  // Enable dry run mode
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -674,6 +692,8 @@ async fn test_kill_tool_safety_check_outside_project() {
         signal: Some("TERM".to_string()),
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -729,6 +749,8 @@ async fn test_kill_tool_integration_with_real_process() {
         signal: Some("TERM".to_string()),
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -1462,6 +1484,8 @@ async fn test_kill_tool_process_detection() {
         signal: None,
         dry_run: true,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -1490,6 +1514,8 @@ async fn test_kill_tool_process_detection() {
         signal: None,
         dry_run: false,
         max_processes: None,
+        preview_only: false,
+        force_confirmation: false,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -1500,3 +1526,109 @@ async fn test_kill_tool_process_detection() {
     let exit_status = child.try_wait().expect("Failed to check process status");
     assert!(exit_status.is_some(), "Process should have been killed");
 }
+
+#[tokio::test]
+#[serial]
+async fn test_lsof_tool_basic() {
+    use serde_json::Value;
+    
+    let (_temp_dir, _context) = setup_test_env();
+    
+    // Test basic lsof functionality
+    let tool = LsofTool {
+        file_pattern: None,
+        include_all: Some(false),
+        process_filter: None,
+        output_format: None,
+        sort_by: None,
+    };
+    
+    let result = tool.call().await;
+    assert!(result.is_ok(), "lsof tool failed: {:?}", result.err());
+    
+    let content = extract_text_content(&result.unwrap());
+    let json: Value = serde_json::from_str(&content).unwrap();
+    
+    // Basic validation
+    assert!(json.get("total_found").is_some());
+    assert!(json.get("files").is_some());
+    assert!(json.get("project_root").is_some());
+    assert!(json["files"].is_array());
+}
+
+#[tokio::test]
+#[serial]
+async fn test_lsof_tool_with_file_pattern() {
+    use serde_json::Value;
+    
+    let (_temp_dir, _context) = setup_test_env();
+    
+    // Test with file pattern for log files
+    let tool = LsofTool {
+        file_pattern: Some("*.log".to_string()),
+        include_all: Some(false),
+        process_filter: None,
+        output_format: None,
+        sort_by: None,
+    };
+    
+    let result = tool.call().await;
+    assert!(result.is_ok(), "lsof with file pattern failed: {:?}", result.err());
+    
+    let content = extract_text_content(&result.unwrap());
+    let json: Value = serde_json::from_str(&content).unwrap();
+    
+    // Check structure
+    assert!(json["total_found"].is_number());
+    assert!(json["files"].is_array());
+    
+    // If any files found, they should match the pattern
+    let files = json["files"].as_array().unwrap();
+    for file in files {
+        if let Some(path) = file["file_path"].as_str() {
+            if !path.starts_with("[") {  // Skip info messages
+                assert!(path.ends_with(".log") || path.contains("log"), 
+                    "File {} doesn't match *.log pattern", path);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+#[serial]
+async fn test_lsof_tool_include_all() {
+    use serde_json::Value;
+    
+    let (_temp_dir, _context) = setup_test_env();
+    
+    // Test with include_all to get pipes, sockets, etc
+    let tool = LsofTool {
+        file_pattern: None,
+        include_all: Some(true),
+        process_filter: None,
+        output_format: None,
+        sort_by: None,
+    };
+    
+    let result = tool.call().await;
+    assert!(result.is_ok(), "lsof with include_all failed: {:?}", result.err());
+    
+    let content = extract_text_content(&result.unwrap());
+    let json: Value = serde_json::from_str(&content).unwrap();
+    
+    // Should have valid structure
+    assert!(json["total_found"].is_number());
+    assert!(json["files"].is_array());
+    assert!(json["project_root"].is_string());
+    
+    // With include_all, we might see various file types
+    let files = json["files"].as_array().unwrap();
+    let _file_types: Vec<String> = files.iter()
+        .filter_map(|f| f["file_type"].as_str())
+        .map(|s| s.to_string())
+        .collect();
+    
+    // Should contain at least some entries (even if just the info message on Windows)
+    assert!(!files.is_empty() || cfg!(target_os = "windows"));
+}
+

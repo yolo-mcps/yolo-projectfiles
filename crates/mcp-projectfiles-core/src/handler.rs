@@ -112,6 +112,7 @@ impl CoreHandler {
             // Process management tools
             ProtocolTools::ProcessTool(process) => process.call().await,
             ProtocolTools::KillTool(kill) => kill.call_with_context(&self.context).await,
+            ProtocolTools::LsofTool(lsof) => lsof.call().await,
             
             // Structured data tools
             ProtocolTools::JsonQueryTool(jq) => jq.call_with_context(&self.context).await,

@@ -11,6 +11,7 @@ mod hash;
 mod jq;
 mod kill;
 mod list;
+mod lsof;
 mod mkdir;
 mod move_file;
 mod process;
@@ -39,6 +40,7 @@ pub use hash::HashTool;
 pub use jq::JsonQueryTool;
 pub use kill::KillTool;
 pub use list::ListTool;
+pub use lsof::LsofTool;
 pub use mkdir::MkdirTool;
 pub use move_file::MoveTool;
 pub use process::ProcessTool;
@@ -75,6 +77,7 @@ tool_box!(
         HashTool,
         ProcessTool,
         KillTool,
+        LsofTool,
         JsonQueryTool,
         YamlQueryTool,
         TomlQueryTool

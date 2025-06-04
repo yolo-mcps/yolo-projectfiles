@@ -56,6 +56,110 @@ async fn test_copy_tool_blocks_symlink_destination() {
 }
 
 #[tokio::test]
+async fn test_copy_tool_blocks_symlink_destination_with_subdirs() {
+    let (project_dir, external_dir, context) = setup_symlink_test_env().await;
+    
+    // Create a file in project directory
+    let project_root = project_dir.path();
+    let external_root = external_dir.path();
+    fs::write(project_root.join("source.txt"), "Source content").await.unwrap();
+    
+    // Try to copy to subdirectory within symlinked directory
+    let copy_tool = CopyTool {
+        source: "source.txt".to_string(),
+        destination: "external_link/subdir/copied.txt".to_string(),
+        overwrite: false,
+        preserve_metadata: true,
+    };
+    
+    let result = copy_tool.call_with_context(&context).await;
+    assert!(result.is_err(), "Should block copying to subdirectory in symlinked directory");
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(error_msg.contains("outside the project directory"));
+    
+    // Ensure file was not created
+    assert!(!external_root.join("subdir/copied.txt").exists());
+}
+
+#[tokio::test]
+async fn test_copy_tool_blocks_new_subdir_in_symlink() {
+    let (project_dir, external_dir, context) = setup_symlink_test_env().await;
+    
+    // Create a file in project directory
+    let project_root = project_dir.path();
+    let external_root = external_dir.path();
+    fs::write(project_root.join("source.txt"), "Source content").await.unwrap();
+    
+    // Try to copy to non-existent subdirectory within symlinked directory
+    let copy_tool = CopyTool {
+        source: "source.txt".to_string(),
+        destination: "external_link/newdir/copied.txt".to_string(),
+        overwrite: false,
+        preserve_metadata: true,
+    };
+    
+    let result = copy_tool.call_with_context(&context).await;
+    assert!(result.is_err(), "Should block copying to new subdirectory in symlinked directory");
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(error_msg.contains("outside the project directory"));
+    
+    // Ensure directory and file were not created
+    assert!(!external_root.join("newdir").exists());
+}
+
+#[tokio::test]
+async fn test_tomlq_write_blocks_new_subdir_in_symlink() {
+    let (_project_dir, external_dir, context) = setup_symlink_test_env().await;
+    
+    let external_root = external_dir.path();
+    
+    // Try to write TOML to new subdirectory through symlink
+    let tomlq_tool = TomlQueryTool {
+        file_path: "external_link/newdir/config.toml".to_string(),
+        query: ".section.key = \"value\"".to_string(),
+        operation: "write".to_string(),
+        output_format: "toml".to_string(),
+        in_place: true,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = tomlq_tool.call_with_context(&context).await;
+    assert!(result.is_err(), "Should block writing to new subdirectory in symlinked directory");
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(error_msg.contains("File not found") || error_msg.contains("outside the project directory"));
+    
+    // Ensure directory and file were not created
+    assert!(!external_root.join("newdir").exists());
+}
+
+#[tokio::test]
+async fn test_yq_write_blocks_new_subdir_in_symlink() {
+    let (_project_dir, external_dir, context) = setup_symlink_test_env().await;
+    
+    let external_root = external_dir.path();
+    
+    // Try to write YAML to new subdirectory through symlink
+    let yq_tool = YamlQueryTool {
+        file_path: "external_link/newdir/config.yaml".to_string(),
+        query: ".section.key = \"value\"".to_string(),
+        operation: "write".to_string(),
+        output_format: "yaml".to_string(),
+        in_place: true,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = yq_tool.call_with_context(&context).await;
+    assert!(result.is_err(), "Should block writing to new subdirectory in symlinked directory");
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(error_msg.contains("File not found") || error_msg.contains("outside the project directory"));
+    
+    // Ensure directory and file were not created
+    assert!(!external_root.join("newdir").exists());
+}
+
+#[tokio::test]
 async fn test_write_tool_blocks_symlink_path() {
     let (_project_dir, _external_dir, context) = setup_symlink_test_env().await;
     

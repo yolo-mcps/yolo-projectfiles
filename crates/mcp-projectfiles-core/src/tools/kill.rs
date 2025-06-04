@@ -8,6 +8,7 @@ use rust_mcp_schema::{
 };
 use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -26,6 +27,8 @@ Parameters:
 - signal: Signal to send - \"TERM\", \"KILL\", \"INT\", \"QUIT\", \"USR1\", \"USR2\" (optional, default: \"TERM\")
 - dry_run: Preview processes to kill without terminating (optional, default: false)
 - max_processes: Maximum processes to kill with pattern (optional, default: 10)
+- preview_only: Show matching processes without dry run details (optional, default: false)
+- force_confirmation: Require explicit confirmation for dangerous operations (optional, default: false)
 
 Safety features:
 - Only kills processes within project directory (automatic safety)
@@ -41,9 +44,11 @@ When to use dry_run:
 
 Examples:
 - Kill specific process: {\"pid\": 12345}
-- Preview pattern kill carefully: {\"name_pattern\": \"*webpack*\", \"dry_run\": true}
+- Preview pattern matches: {\"name_pattern\": \"*webpack*\", \"preview_only\": true}
+- Dry run with details: {\"name_pattern\": \"*webpack*\", \"dry_run\": true}
 - Kill hung process with KILL signal: {\"pid\": 12345, \"signal\": \"KILL\"}
 - Pattern kill with limit: {\"name_pattern\": \"node\", \"max_processes\": 5}
+- Safe bulk operation: {\"name_pattern\": \"*python*\", \"force_confirmation\": true}
 - Interrupt process: {\"pid\": 12345, \"signal\": \"INT\"}
 
 Returns JSON with:
@@ -71,6 +76,14 @@ pub struct KillTool {
 
     /// Maximum number of processes to kill when using name_pattern (default: 10)
     pub max_processes: Option<u32>,
+
+    /// Show matching processes without detailed dry run output (default: false)
+    #[serde(default)]
+    pub preview_only: bool,
+
+    /// Require explicit confirmation for dangerous operations (default: false)
+    #[serde(default)]
+    pub force_confirmation: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -114,11 +127,27 @@ impl StatefulTool for KillTool {
         // By default, allow killing processes in the project directory
         // (Safety is already enforced by the project directory check)
 
-        // Validate that either PID or name pattern is provided
+        // Enhanced parameter validation
         if self.pid.is_none() && self.name_pattern.is_none() {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                "Either 'pid' or 'name_pattern' must be specified",
+                "Either 'pid' or 'name_pattern' must be specified. Example: {\"pid\": 12345} or {\"name_pattern\": \"*python*\"}",
+            )));
+        }
+
+        // Validate mutual exclusivity of certain options
+        if self.pid.is_some() && self.name_pattern.is_some() {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "Cannot specify both 'pid' and 'name_pattern'. Use one or the other.",
+            )));
+        }
+
+        // Validate preview_only and dry_run combination
+        if self.preview_only && self.dry_run {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "Cannot use both 'preview_only' and 'dry_run'. Use 'preview_only' for simple listing or 'dry_run' for detailed preview.",
             )));
         }
 
@@ -132,16 +161,41 @@ impl StatefulTool for KillTool {
         let signal = self.signal.as_deref().unwrap_or("TERM");
         let max_processes = self.max_processes.unwrap_or(10);
 
-        // Validate signal
+        // Enhanced signal validation
         let valid_signals = ["TERM", "KILL", "INT", "QUIT", "USR1", "USR2"];
         if !valid_signals.contains(&signal) {
             return Err(CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
                 &format!(
-                    "Invalid signal '{}'. Valid signals: {}",
+                    "Invalid signal '{}'. Valid signals: {} - Use TERM for graceful shutdown, KILL for force kill, INT for interrupt",
                     signal,
                     valid_signals.join(", ")
                 ),
+            )));
+        }
+
+        // Validate PID format if provided
+        if let Some(pid) = self.pid {
+            if pid == 0 {
+                return Err(CallToolError::from(tool_errors::invalid_input(
+                    TOOL_NAME,
+                    "PID cannot be 0. Please provide a valid process ID.",
+                )));
+            }
+        }
+
+        // Validate max_processes
+        if max_processes == 0 {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "max_processes must be greater than 0",
+            )));
+        }
+
+        if max_processes > 50 {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                "max_processes cannot exceed 50 for safety. Use smaller batches for bulk operations.",
             )));
         }
 
@@ -183,6 +237,34 @@ impl StatefulTool for KillTool {
                     ),
                 )));
             }
+        }
+
+        // Handle preview_only mode - just show matching processes
+        if self.preview_only {
+            let preview_result = json!({
+                "preview_mode": true,
+                "processes_found": processes_to_kill.len(),
+                "matches": processes_to_kill.iter().map(|p| {
+                    json!({
+                        "pid": p.pid,
+                        "name": p.name,
+                        "working_directory": p.cwd,
+                        "command_line": get_process_command_line(p.pid).unwrap_or_else(|_| "N/A".to_string())
+                    })
+                }).collect::<Vec<_>>(),
+                "signal_would_send": signal,
+                "note": "This is preview mode - no processes were terminated. Use dry_run=true for detailed execution preview or remove preview_only to execute."
+            });
+
+            return Ok(CallToolResult {
+                content: vec![CallToolResultContentItem::TextContent(TextContent::new(
+                    serde_json::to_string_pretty(&preview_result)
+                        .unwrap_or_else(|_| "Error formatting preview".to_string()),
+                    None,
+                ))],
+                is_error: Some(false),
+                meta: None,
+            });
         }
 
         // Kill the processes (or simulate if dry run)
@@ -285,24 +367,24 @@ impl StatefulTool for KillTool {
             ));
             response.push_str("To actually terminate these processes, run the command again without dry_run=true.\n");
         } else {
-            // Regular mode - show results
-            response.push_str(&format!(
-                "Terminated {} of {} {}\n\n",
-                killed_count,
-                processes_to_kill.len(),
-                format_count(processes_to_kill.len(), "process", "processes")
-            ));
+            // Regular mode - show results (removed human-readable text to return pure JSON)
         }
 
-        // Add JSON summary
-        response.push_str("\n");
+        // Return JSON summary only (no prefix text)
         let result_json = serde_json::to_string_pretty(&summary).map_err(|e| {
             CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
                 &format!("Failed to serialize result: {}", e),
             ))
         })?;
-        response.push_str(&result_json);
+        
+        // For dry run, include the human-readable text before JSON
+        if self.dry_run {
+            response.push_str(&result_json);
+        } else {
+            // For regular mode, return only JSON for consistency
+            response = result_json;
+        }
 
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
