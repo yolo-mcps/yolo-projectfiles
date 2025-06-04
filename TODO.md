@@ -31,6 +31,7 @@ cargo install --path crates/mcp-projectfiles-bin
 - **edit tool file resolution**: Investigate why `projectfiles:edit` sometimes reports "file not found" - may be related to path resolution, symlink handling, or working directory assumptions. Need to improve error messages to be more specific about the exact issue.
 - **Inconsistent parameter documentation**: Tool descriptions inconsistently mark which parameters are optional. Some tools clearly mark "(optional)" while others don't. Need to standardize this across all tools for better usability. Example: grep now marks all optional params, but read, find, edit don't.
 - **copy tool documentation improved**: Updated copy tool documentation to match the patterns of edit, grep, and list tools with clear parameter descriptions, examples, and features. Added comprehensive test coverage including edge cases like copying directories into themselves, handling special characters, and large files.
+- **file tool documentation improved**: Updated file tool (formerly file_type) documentation to follow standardized patterns from edit, grep, and list tools. Added structured description with NOTE about optional parameters, comprehensive examples section, features list, and clear return value documentation. Parameter comments now consistently marked as "(optional)" where appropriate.
 - **delete tool documentation improved**: Updated delete tool documentation to match the patterns of edit, grep, and list tools. Added comprehensive parameter documentation with "(optional)" markers, examples section, and 4 additional test cases for edge cases.
 - **diff tool documentation improved**: Enhanced diff tool documentation with structured format, clear parameter descriptions, and comprehensive examples. The tool already has excellent test coverage (20 tests) including symlink handling, whitespace ignoring, and various edge cases.
 - **exists tool improvements completed**: 
@@ -41,6 +42,18 @@ cargo install --path crates/mcp-projectfiles-bin
   - ✅ Added include_metadata parameter for optional size/permissions/timestamps
   - ✅ Added 3 new tests (metadata with/without, nested paths) - total 11 tests
   - ✅ The tool now provides more value for agentic LLMs with metadata support
+- **file tool improvements completed** (renamed from file_type):
+  - ✅ Documentation already follows standardized pattern from edit, grep, and list tools
+  - ✅ Parameter documentation already had "(optional)" markers where appropriate
+  - ✅ Already has excellent test coverage (22 tests, now 27 tests)
+  - ✅ Added 4 new features useful for agentic coding LLMs:
+    - Line ending detection (LF vs CRLF) - important for cross-platform compatibility
+    - Shebang detection for executable scripts (e.g., #!/usr/bin/env python3)
+    - Programming language identification (30+ languages based on extension and content)
+    - Preview of first 5 lines for text files - quick content inspection
+  - ✅ Added 5 new test cases for the new features - all tests passing
+  - ✅ Fixed line ending detection logic to properly handle CRLF sequences
+  - ✅ Renamed tool from "file_type" to "file" to match Unix command
 
 ### Grep Tool Future Improvements (Phase 2 & 3 from GREP_IMPROVEMENTS.md)
 - **Performance**: Implement streaming file reader to avoid loading entire files into memory

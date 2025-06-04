@@ -4,7 +4,7 @@ mod delete;
 mod diff;
 mod edit;
 mod exists;
-mod file_type;
+mod file;
 mod find;
 mod grep;
 mod hash;
@@ -32,7 +32,7 @@ pub use delete::DeleteTool;
 pub use diff::DiffTool;
 pub use edit::{EditTool, EditOperation};
 pub use exists::ExistsTool;
-pub use file_type::FileTypeTool;
+pub use file::FileTool;
 pub use find::FindTool;
 pub use grep::GrepTool;
 pub use hash::HashTool;
@@ -70,7 +70,7 @@ tool_box!(
         DiffTool,
         FindTool,
         TreeTool,
-        FileTypeTool,
+        FileTool,
         WcTool,
         HashTool,
         ProcessTool,

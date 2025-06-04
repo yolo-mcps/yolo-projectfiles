@@ -111,3 +111,5 @@ The main binary (`crates/mcp-projectfiles-bin/src/main.rs`) uses clap for CLI pa
 ## Development Memories
 
 - Use `test-files` directory when creating test files or scripts
+- Since this is an MCP for agentic coding assistants, we do not care about preserving backwards compatility.
+- The `file_type` tool has been renamed to `file` to match the Unix command and provide better developer familiarity.

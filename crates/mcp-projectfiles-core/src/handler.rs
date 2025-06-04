@@ -102,7 +102,7 @@ impl CoreHandler {
             ProtocolTools::ExistsTool(exists) => exists.call_with_context(&self.context).await,
             ProtocolTools::StatTool(stat) => stat.call_with_context(&self.context).await,
             ProtocolTools::DiffTool(diff) => diff.call_with_context(&self.context).await,
-            ProtocolTools::FileTypeTool(file_type) => file_type.call_with_context(&self.context).await,
+            ProtocolTools::FileTool(file) => file.call_with_context(&self.context).await,
             
             // Priority 3 StatefulTool implementations
             ProtocolTools::TreeTool(tree) => tree.call_with_context(&self.context).await,
