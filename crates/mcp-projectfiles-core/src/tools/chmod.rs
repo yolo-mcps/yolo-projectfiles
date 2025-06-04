@@ -66,9 +66,9 @@ impl StatefulTool for ChmodTool {
                 };
                 
                 let options = MatchOptions {
-                    case_sensitive: true,
                     require_literal_separator: false,
                     require_literal_leading_dot: false,
+                    ..Default::default()
                 };
                 
                 let paths: Vec<_> = glob_with(&pattern_path, options)

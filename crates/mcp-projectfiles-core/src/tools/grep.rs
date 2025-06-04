@@ -22,7 +22,7 @@ Parameters:
 - path: Search directory (default: \".\")
 - include: File pattern to include (e.g., \"*.rs\")
 - exclude: File pattern to exclude
-- case_insensitive: Ignore case (default: false)
+- case: Case sensitivity (\"sensitive\" or \"insensitive\", default: \"sensitive\")
 - linenumbers: Show line numbers (default: true)
 - context_before: Lines before match (default: 0)
 - context_after: Lines after match (default: 0)
@@ -43,9 +43,9 @@ pub struct GrepTool {
     /// File pattern to exclude (e.g., "*.log", "*.tmp")
     #[serde(default)]
     pub exclude: Option<String>,
-    /// Case insensitive search
-    #[serde(default = "default_case_insensitive")]
-    pub case_insensitive: bool,
+    /// Case sensitivity for pattern matching: "sensitive" (default) or "insensitive"
+    #[serde(default = "default_case")]
+    pub case: String,
     /// Show line numbers
     #[serde(default = "default_linenumbers")]
     pub linenumbers: bool,
@@ -67,8 +67,8 @@ fn default_path() -> String {
     ".".to_string()
 }
 
-fn default_case_insensitive() -> bool {
-    false
+fn default_case() -> String {
+    "sensitive".to_string()
 }
 
 fn default_linenumbers() -> bool {
@@ -101,6 +101,14 @@ impl StatefulTool for GrepTool {
         let project_root = context.get_project_root()
             .map_err(|e| CallToolError::new(std::io::Error::new(std::io::ErrorKind::Other, format_tool_error(TOOL_NAME, &format!("Failed to get project root: {}", e)))))?;
         
+        // Validate case parameter
+        if self.case != "sensitive" && self.case != "insensitive" {
+            return Err(CallToolError::from(tool_errors::invalid_input(
+                TOOL_NAME,
+                &format!("Invalid case value '{}'. Must be 'sensitive' or 'insensitive'", self.case)
+            )));
+        }
+        
         // Use the utility function to resolve search path with symlink support
         let canonical_search_path = resolve_path_for_read(&self.path, &project_root, self.follow_search_path, TOOL_NAME)?;
         
@@ -113,7 +121,7 @@ impl StatefulTool for GrepTool {
         
         // Compile regex pattern
         let regex = RegexBuilder::new(&self.pattern)
-            .case_insensitive(self.case_insensitive)
+            .case_insensitive(self.case == "insensitive")
             .build()
             .map_err(|e| CallToolError::from(tool_errors::pattern_error(TOOL_NAME, &self.pattern, &e.to_string())))?;
         
