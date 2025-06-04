@@ -483,22 +483,22 @@ async fn test_grep_tool_requires_pattern() {
 // Kill Tool Tests
 #[tokio::test]
 #[serial]
-async fn test_kill_tool_requires_confirmation() {
+async fn test_kill_tool_no_longer_requires_confirmation() {
     let (_temp_dir, context) = setup_test_env();
     
     let tool = KillTool {
-        pid: Some(1),  // Use PID 1 which should exist but not be killable
+        pid: Some(999999),  // Use a PID that doesn't exist
         name_pattern: None,
         signal: None,
-        confirm: false,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
     let result = tool.call_with_context(&context).await;
+    // Should fail because process doesn't exist
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("confirmation") || error_msg.contains("confirm"));
+    assert!(error_msg.contains("not found"));
 }
 
 #[tokio::test]
@@ -510,8 +510,7 @@ async fn test_kill_tool_requires_pid_or_pattern() {
         pid: None,
         name_pattern: None,
         signal: None,
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -530,8 +529,7 @@ async fn test_kill_tool_invalid_signal() {
         pid: Some(1),
         name_pattern: None,
         signal: Some("INVALID".to_string()),
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -553,8 +551,7 @@ async fn test_kill_tool_valid_signals() {
             pid: Some(999999), // Use a PID that definitely doesn't exist
             name_pattern: None,
             signal: Some(signal.to_string()),
-            confirm: true,
-            force: false,
+            dry_run: false,
             max_processes: None,
         };
         
@@ -576,8 +573,7 @@ async fn test_kill_tool_nonexistent_pid() {
         pid: Some(999999), // Use a PID that definitely doesn't exist
         name_pattern: None,
         signal: None,
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -589,24 +585,22 @@ async fn test_kill_tool_nonexistent_pid() {
 
 #[tokio::test]
 #[serial]
-async fn test_kill_tool_force_mode_works() {
+async fn test_kill_tool_default_behavior() {
     let (_temp_dir, context) = setup_test_env();
     
     let tool = KillTool {
         pid: Some(999999), // Use a PID that definitely doesn't exist
         name_pattern: None,
         signal: None,
-        confirm: false, // Don't confirm
-        force: true,    // But use force mode
+        dry_run: false,
         max_processes: None,
     };
     
     let result = tool.call_with_context(&context).await;
-    // Should fail because process doesn't exist, not because of confirmation
-    if result.is_err() {
-        let error_msg = result.unwrap_err().to_string();
-        assert!(!error_msg.contains("confirmation"));
-    }
+    // Should fail because process doesn't exist
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("not found"));
 }
 
 #[tokio::test]
@@ -618,8 +612,7 @@ async fn test_kill_tool_pattern_no_matches() {
         pid: None,
         name_pattern: Some("nonexistent_process_name_12345".to_string()),
         signal: None,
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -639,8 +632,7 @@ async fn test_kill_tool_max_processes_default() {
         pid: None,
         name_pattern: Some("nonexistent".to_string()),
         signal: None,
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None, // Should default to 10
     };
     
@@ -649,12 +641,30 @@ async fn test_kill_tool_max_processes_default() {
     assert!(result.is_err());
 }
 
+#[tokio::test]
+#[serial]
+async fn test_kill_tool_dry_run_mode() {
+    let (_temp_dir, context) = setup_test_env();
+    
+    let tool = KillTool {
+        pid: Some(999999), // Use a PID that doesn't exist
+        name_pattern: None,
+        signal: None,
+        dry_run: true,  // Enable dry run mode
+        max_processes: None,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    // In dry run mode, it should still fail for non-existent PID
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("not found"));
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tokio::test]
 #[serial]
 async fn test_kill_tool_safety_check_outside_project() {
-
-    
     let (_temp_dir, context) = setup_test_env();
     
     // Try to find the kernel or init process (PID 1) which should never be in our project directory
@@ -662,8 +672,7 @@ async fn test_kill_tool_safety_check_outside_project() {
         pid: Some(1), // PID 1 is usually the init process
         name_pattern: None,
         signal: Some("TERM".to_string()),
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -718,8 +727,7 @@ async fn test_kill_tool_integration_with_real_process() {
         pid: Some(child_pid),
         name_pattern: None,
         signal: Some("TERM".to_string()),
-        confirm: true,
-        force: false,
+        dry_run: false,
         max_processes: None,
     };
     
@@ -1408,4 +1416,87 @@ async fn test_symlink_metadata_without_follow() {
     } else {
         panic!("Expected text content");
     }
+}
+
+#[tokio::test]
+#[cfg(unix)] // Kill tool is Unix-specific
+async fn test_kill_tool_process_detection() {
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+    use tokio::time::sleep;
+    
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create a test script
+    let script_path = temp_path.join("test_process.sh");
+    fs::write(&script_path, "#!/bin/bash\nwhile true; do sleep 1; done").unwrap();
+    
+    // Make it executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).unwrap();
+    }
+    
+    // Start the process
+    let mut child = Command::new("bash")
+        .arg(script_path.to_str().unwrap())
+        .current_dir(temp_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to start test process");
+    
+    let pid = child.id();
+    
+    // Give process time to start
+    sleep(Duration::from_millis(100)).await;
+    
+    // Test dry run - should show process info without killing
+    let tool = KillTool {
+        pid: Some(pid),
+        name_pattern: None,
+        signal: None,
+        dry_run: true,
+        max_processes: None,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    if let Err(e) = &result {
+        eprintln!("Error during dry run: {:?}", e);
+    }
+    assert!(result.is_ok(), "Dry run failed: {:?}", result.err());
+    let content = result.unwrap().content;
+    assert!(!content.is_empty());
+    
+    if let Some(CallToolResultContentItem::TextContent(text)) = content.first() {
+        let output = &text.text;
+        assert!(output.contains("DRY RUN"));
+        assert!(output.contains(&format!("PID: {}", pid)));
+        assert!(output.contains("test_process.sh"));
+        assert!(output.contains("\"dry_run\": true"));
+        assert!(output.contains("\"processes_killed\": 0"));
+    } else {
+        panic!("Expected text content");
+    }
+    
+    // Test actual kill
+    let tool = KillTool {
+        pid: Some(pid),
+        name_pattern: None,
+        signal: None,
+        dry_run: false,
+        max_processes: None,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    
+    // Verify process was killed
+    sleep(Duration::from_millis(100)).await;
+    let exit_status = child.try_wait().expect("Failed to check process status");
+    assert!(exit_status.is_some(), "Process should have been killed");
 }

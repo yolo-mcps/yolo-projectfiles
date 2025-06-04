@@ -16,6 +16,53 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 const TOOL_NAME: &str = "edit";
+const MAX_OCCURRENCES_TO_SHOW: usize = 5;
+
+/// Find all occurrences of a string in content and return their locations with context
+fn find_occurrences_with_context(content: &str, search_str: &str, context_chars: usize) -> Vec<(usize, String)> {
+    let mut occurrences = Vec::new();
+    let mut start = 0;
+    
+    while let Some(pos) = content[start..].find(search_str) {
+        let absolute_pos = start + pos;
+        
+        // Find line number
+        let line_num = content[..absolute_pos].matches('\n').count() + 1;
+        
+        // Get context around the occurrence
+        let context_start = absolute_pos.saturating_sub(context_chars);
+        let context_end = (absolute_pos + search_str.len() + context_chars).min(content.len());
+        
+        // Find line boundaries for better context
+        let line_start = content[..absolute_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line_end = content[absolute_pos..].find('\n').map(|p| absolute_pos + p).unwrap_or(content.len());
+        
+        // Use the wider context (either character-based or line-based)
+        let actual_start = context_start.min(line_start);
+        let actual_end = context_end.max(line_end);
+        
+        let context = &content[actual_start..actual_end];
+        
+        // Replace newlines with \n for display
+        let display_context = context.replace('\n', "\\n");
+        
+        // Add ellipsis if truncated
+        let mut display = String::new();
+        if actual_start > 0 {
+            display.push_str("...");
+        }
+        display.push_str(&display_context);
+        if actual_end < content.len() {
+            display.push_str("...");
+        }
+        
+        occurrences.push((line_num, display));
+        
+        start = absolute_pos + search_str.len();
+    }
+    
+    occurrences
+}
 
 /// Generate a colored unified diff using the similar crate
 fn generate_colored_diff(original: &str, modified: &str, file_path: &str) -> String {
@@ -228,6 +275,11 @@ When to use dry_run:
 - Allows preview of all changes before committing
 - Returns diff output without modifying the file
 - After showing the dry run preview, ask the user if they would like to proceed with the actual changes
+
+Error Handling:
+- When multiple occurrences are found, the error shows where they are located
+- When string is not found, hints about possible issues are provided
+- Use 'replace_all: true' to replace all occurrences when needed
 "
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
@@ -428,25 +480,82 @@ impl StatefulTool for EditTool {
             let occurrence_count = content.matches(&edit.old).count();
 
             if occurrence_count == 0 && !edit.old.is_empty() {
+                let mut error_msg = format!(
+                    "Edit {}: String not found in content:\n{}",
+                    idx + 1,
+                    edit.old
+                );
+                
+                // Try to find similar strings if the search string is reasonably sized
+                if edit.old.len() >= 10 && edit.old.len() <= 200 {
+                    // Look for partial matches (beginning or end of search string)
+                    let search_start = &edit.old[..edit.old.len().min(20)];
+                    let search_end = if edit.old.len() > 20 {
+                        &edit.old[edit.old.len().saturating_sub(20)..]
+                    } else {
+                        ""
+                    };
+                    
+                    let mut suggestions = Vec::new();
+                    
+                    // Find lines containing the start of the search string
+                    if content.contains(search_start) {
+                        suggestions.push(format!("String starting with '{}' was found", search_start));
+                    }
+                    
+                    // Find lines containing the end of the search string
+                    if !search_end.is_empty() && content.contains(search_end) {
+                        suggestions.push(format!("String ending with '{}' was found", search_end));
+                    }
+                    
+                    if !suggestions.is_empty() {
+                        error_msg.push_str("\n\nPossible issues:");
+                        for suggestion in suggestions {
+                            error_msg.push_str(&format!("\n  - {}", suggestion));
+                        }
+                        error_msg.push_str("\n\nHint: Check for extra/missing whitespace, line breaks, or special characters.");
+                    }
+                }
+                
                 return Err(CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
-                    &format!(
-                        "Edit {}: String '{}' not found in content",
-                        idx + 1,
-                        edit.old
-                    ),
+                    &error_msg,
                 )));
             }
 
             if occurrence_count != edit.expected as usize {
+                let mut error_msg = format!(
+                    "Edit {}: Expected {} replacements but found {} occurrences",
+                    idx + 1,
+                    edit.expected,
+                    occurrence_count
+                );
+                
+                // Show where the occurrences are when there are multiple
+                if occurrence_count > 1 && occurrence_count <= 10 {
+                    error_msg.push_str("\n\nOccurrences found:");
+                    let occurrences = find_occurrences_with_context(&content, &edit.old, 40);
+                    
+                    for (i, (line_num, context)) in occurrences.iter().take(MAX_OCCURRENCES_TO_SHOW).enumerate() {
+                        error_msg.push_str(&format!("\n  {}. Line {}: {}", i + 1, line_num, context));
+                    }
+                    
+                    if occurrences.len() > MAX_OCCURRENCES_TO_SHOW {
+                        error_msg.push_str(&format!(
+                            "\n  ... and {} more occurrences",
+                            occurrences.len() - MAX_OCCURRENCES_TO_SHOW
+                        ));
+                    }
+                    
+                    error_msg.push_str("\n\nHint: You can:\n");
+                    error_msg.push_str("  - Use 'replace_all: true' to replace all occurrences\n");
+                    error_msg.push_str("  - Make your search string more specific by including surrounding context\n");
+                    error_msg.push_str("  - Use multi-edit mode with an 'edits' array to handle different occurrences separately");
+                }
+                
                 return Err(CallToolError::from(tool_errors::invalid_input(
                     TOOL_NAME,
-                    &format!(
-                        "Edit {}: Expected {} replacements but found {} occurrences",
-                        idx + 1,
-                        edit.expected,
-                        occurrence_count
-                    ),
+                    &error_msg,
                 )));
             }
 
