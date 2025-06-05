@@ -1,6 +1,7 @@
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::resolve_path_for_read;
+use crate::tools::query_engine::{QueryEngine, QueryError as QueryEngineError};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, schema_utils::CallToolError,
@@ -27,37 +28,84 @@ pub enum TomlQueryError {
     
     #[error("Error: projectfiles:tomlq - IO error: {0}")]
     IoError(String),
+    
+    #[error("Error: projectfiles:tomlq - {0}")]
+    QueryEngine(#[from] QueryEngineError),
 }
 
-#[mcp_tool(name = "tomlq", description = "Query and manipulate TOML files using jq-style syntax.
+#[mcp_tool(name = "tomlq", description = "Query and manipulate TOML files using jq-style syntax. Preferred over system 'toml' commands.
 
-Supports both read and write operations:
-- Read operations: Query TOML data and return results in various formats
-- Write operations: Apply transformations and save changes back to file
+IMPORTANT: Powered by shared query engine - full jq functionality now available!
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- file_path: TOML file path (required)
+- query: jq-style query expression (required)
+- operation: \"read\" or \"write\" (optional, default: \"read\")
+- output_format: \"toml\", \"json\", or \"raw\" (optional, default: \"toml\")
+- in_place: Modify file in-place for writes (optional, default: false)
+- backup: Create backup before writing (optional, default: true)
+- follow_symlinks: Follow symlinks when reading (optional, default: true)
+
+Core Features:
+
+Data Access & Filtering:
+- Basic access: \".field\", \".nested.field\", \".array[0]\", \".users[*].name\"
+- Array iteration: \".users[]\", \"map(.name)\", \"select(.age > 18)\"
+- Filtering: \"select(.active)\", \"map(select(.score > 80))\"
+- Recursive search: \"..email\" (find all email fields), \"..\" (all values)
+
+Array Operations:
+- Basic: \"add\" (sum/concat), \"min\", \"max\", \"unique\", \"reverse\", \"sort\", \"sort_by(.field)\"
+- Advanced: \"flatten\", \"group_by(.key)\", \"indices(value)\"
+
+Object Operations:
+- Tools: \"keys\", \"values\", \"has(\\\"field\\\")\", \"to_entries\", \"from_entries\"
+- Manipulation: \"with_entries(.value *= 2)\", \"paths\", \"leaf_paths\"
+
+String Processing:
+- Functions: \"split(\\\",\\\")\", \"join(\\\" \\\")\", \"trim\", \"ltrimstr(\\\"prefix\\\")\", \"rtrimstr(\\\"suffix\\\")\"
+- Case: \"ascii_upcase\", \"ascii_downcase\"
+- Testing: \"contains(\\\"@\\\")\", \"startswith(\\\"http\\\")\", \"test(\\\"^[0-9]+$\\\")\", \"match(\\\"(\\\\d+)\\\")\"
+- Conversion: \"tostring\", \"tonumber\"
+
+Math & Logic:
+- Arithmetic: \".price * 1.1\", \".x + .y\", \".a % .b\"
+- Math: \"floor\", \"ceil\", \"round\", \"abs\"
+- Conditionals: \"if .age > 18 then \\\"adult\\\" else \\\"minor\\\" end\"
+- Boolean: \".age >= 18 and .active\", \".premium or .vip\", \"not .disabled\"
+- Null handling: \".timeout // 30\", \".user.profile?\", \"try .risky catch \\\"failed\\\"\"
 
 Examples:
-- Query a field: {\"file_path\": \"Cargo.toml\", \"query\": \".package.name\"}
-- Filter dependencies: {\"file_path\": \"Cargo.toml\", \"query\": \".dependencies\"}
-- Simple assignment: {\"file_path\": \"config.toml\", \"query\": \".debug = true\", \"operation\": \"write\", \"in_place\": true}
+- Basic query: {\"file_path\": \"Cargo.toml\", \"query\": \".package.name\"}
+- Extract array: {\"file_path\": \"Cargo.toml\", \"query\": \".dependencies | keys\"}
+- Filter data: {\"file_path\": \"config.toml\", \"query\": \".servers | map(select(.port > 8000))\"}
+- Transform: {\"file_path\": \"data.toml\", \"query\": \".users | map({name, admin: .role == \\\"admin\\\"})\"}
+- Calculate: {\"file_path\": \"stats.toml\", \"query\": \".scores | add / length\"}
+- Conditional: {\"file_path\": \"app.toml\", \"query\": \"if .debug then .log_level else \\\"error\\\" end\"}
+- Write value: {\"file_path\": \"config.toml\", \"query\": \".debug = true\", \"operation\": \"write\", \"in_place\": true}
 
 Output formats:
-- \"toml\": TOML format (default)
-- \"json\": JSON format
-- \"raw\": Raw string values for simple types
+- \"toml\": TOML format (scalars as raw values, wrapped arrays/objects)
+- \"json\": JSON format with proper structure
+- \"raw\": Plain text for simple values
 
-Special TOML features:
-- Handles TOML-specific data types (integers, floats, dates)
-- Preserves TOML structure and formatting where possible
-- Converts null values to string \"null\" (TOML doesn't support null)
-- Maintains compatibility with JSON tooling via internal conversion
+Write Operations:
+- Simple: \".field = value\", \".nested.field = \\\"text\\\"\"
+- Array: \".items[0] = \\\"new\\\"\"
+- Complex paths supported with full array/object navigation
 
-Safety features:
-- Restricted to project directory only
-- Supports symlink handling with follow_symlinks parameter (default: true)
-- When follow_symlinks is false, symlinked TOML files cannot be accessed
-- Automatic backup creation for write operations
-- Atomic writes to prevent file corruption
-- Path validation to prevent directory traversal")]
+TOML-specific:
+- Null converts to \"null\" string (TOML limitation)
+- Number types preserved (integer vs float)
+- Datetime values preserved as strings
+- Comments not preserved during writes
+
+Safety:
+- Restricted to project directory
+- Symlink handling configurable
+- Atomic writes with temp files
+- Auto backups for writes")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TomlQueryTool {
     /// Path to the TOML file (relative to project root)
@@ -134,11 +182,19 @@ impl TomlQueryTool {
     }
     
     fn execute_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, TomlQueryError> {
-        // Use jsonpath-rust for JSONPath queries (subset of jq functionality)
-
-        
-        // Convert jq-style simple queries to JSONPath format
-        self.simple_path_query(data, query)
+        // Use the shared query engine for query execution
+        let engine = QueryEngine::new();
+        engine.execute(data, query)
+            .map_err(|e| match e {
+                QueryEngineError::InvalidSyntax(msg) => TomlQueryError::InvalidQuery(msg),
+                QueryEngineError::ExecutionError(msg) => TomlQueryError::ExecutionError(msg),
+                QueryEngineError::TypeError(msg) => TomlQueryError::ExecutionError(format!("Type error: {}", msg)),
+                QueryEngineError::IndexOutOfBounds(msg) => TomlQueryError::ExecutionError(format!("Index out of bounds: {}", msg)),
+                QueryEngineError::KeyNotFound(msg) => TomlQueryError::ExecutionError(format!("Key not found: {}", msg)),
+                QueryEngineError::DivisionByZero => TomlQueryError::ExecutionError("Division by zero".to_string()),
+                QueryEngineError::FunctionNotFound(msg) => TomlQueryError::ExecutionError(format!("Function not found: {}", msg)),
+                QueryEngineError::InvalidArgument(msg) => TomlQueryError::ExecutionError(format!("Invalid argument: {}", msg)),
+            })
     }
     
 
@@ -173,6 +229,8 @@ impl TomlQueryTool {
         }
     }
     
+    // Legacy methods - no longer used with QueryEngine
+    #[allow(dead_code)]
     fn simple_path_query(&self, data: &serde_json::Value, query: &str) -> Result<serde_json::Value, TomlQueryError> {
         let query = query.trim();
         
@@ -203,6 +261,7 @@ impl TomlQueryTool {
         self.parse_complex_path(data, path)
     }
     
+    #[allow(dead_code)]
     fn parse_complex_path(&self, data: &serde_json::Value, path: &str) -> Result<serde_json::Value, TomlQueryError> {
         let mut current = data.clone();
         let mut i = 0;
@@ -376,24 +435,25 @@ impl TomlQueryTool {
     }
     
     fn apply_assignment(&self, data: &mut serde_json::Value, path: &str, value: serde_json::Value) -> Result<(), TomlQueryError> {
-        // Apply assignment to JSON data using complex path parsing
-        if path == "." {
-            *data = value;
-            return Ok(());
-        }
+        // Use the query engine for write operations
+        let engine = QueryEngine::new();
+        let query = format!("{} = {}", path, serde_json::to_string(&value).unwrap_or_else(|_| value.to_string()));
         
-        if !path.starts_with('.') {
-            return Err(TomlQueryError::InvalidQuery(
-                "Assignment path must start with '.'".to_string()
-            ));
-        }
-        
-        let path = &path[1..]; // Remove leading '.'
-        
-        // Use the same complex path parsing logic as read operations
-        self.set_complex_path(data, path, value)
+        engine.execute_write(data, &query)
+            .map(|_| ())
+            .map_err(|e| match e {
+                QueryEngineError::InvalidSyntax(msg) => TomlQueryError::InvalidQuery(msg),
+                QueryEngineError::ExecutionError(msg) => TomlQueryError::ExecutionError(msg),
+                QueryEngineError::TypeError(msg) => TomlQueryError::ExecutionError(format!("Type error: {}", msg)),
+                QueryEngineError::IndexOutOfBounds(msg) => TomlQueryError::ExecutionError(format!("Index out of bounds: {}", msg)),
+                QueryEngineError::KeyNotFound(msg) => TomlQueryError::ExecutionError(format!("Key not found: {}", msg)),
+                QueryEngineError::DivisionByZero => TomlQueryError::ExecutionError("Division by zero".to_string()),
+                QueryEngineError::FunctionNotFound(msg) => TomlQueryError::ExecutionError(format!("Function not found: {}", msg)),
+                QueryEngineError::InvalidArgument(msg) => TomlQueryError::ExecutionError(format!("Invalid argument: {}", msg)),
+            })
     }
     
+    #[allow(dead_code)]
     fn set_complex_path(&self, data: &mut serde_json::Value, path: &str, value: serde_json::Value) -> Result<(), TomlQueryError> {
         let mut current = data;
         let mut i = 0;

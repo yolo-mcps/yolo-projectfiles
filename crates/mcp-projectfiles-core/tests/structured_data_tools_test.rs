@@ -348,3 +348,311 @@ values = [1, 2, 3]
     // Should output an array with the values 1, 2, 3
     assert!(output.contains('[') && output.contains('1') && output.contains('2') && output.contains('3') && output.contains(']'));
 }
+
+#[tokio::test]
+#[serial]
+async fn test_tomlq_array_access() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test TOML file with arrays
+    let toml_content = r#"
+[[servers]]
+name = "web1"
+port = 8080
+
+[[servers]]
+name = "web2"
+port = 8081
+
+[config]
+ports = [80, 443, 8080]
+"#;
+    fs::write(temp_path.join("arrays.toml"), toml_content).unwrap();
+    
+    // Test array index access
+    let tool = TomlQueryTool {
+        file_path: "arrays.toml".to_string(),
+        query: ".servers[0].name".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert_eq!(output.trim(), "web1");
+    
+    // Test nested array access
+    let nested_tool = TomlQueryTool {
+        file_path: "arrays.toml".to_string(),
+        query: ".config.ports[1]".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = nested_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert_eq!(output.trim(), "443");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tomlq_write_operations() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test TOML file
+    let toml_content = r#"name = "original"
+version = "1.0.0"
+
+[config]
+debug = false
+"#;
+    let file_path = temp_path.join("write.toml");
+    fs::write(&file_path, toml_content).unwrap();
+    
+    // Read the file first (required for write operations)
+    let read_tool = TomlQueryTool {
+        file_path: "write.toml".to_string(),
+        query: ".".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    read_tool.call_with_context(&context).await.unwrap();
+    
+    // Test simple write operation
+    let write_tool = TomlQueryTool {
+        file_path: "write.toml".to_string(),
+        query: r#".name = "updated""#.to_string(),
+        operation: "write".to_string(),
+        output_format: "toml".to_string(),
+        in_place: true,
+        backup: true,
+        follow_symlinks: true,
+    };
+    
+    let result = write_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    
+    // Verify the change
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert!(content.contains(r#"name = "updated""#));
+    
+    // Verify backup was created
+    assert!(temp_path.join("write.toml.bak").exists());
+    
+    // Test nested write
+    let nested_write = TomlQueryTool {
+        file_path: "write.toml".to_string(),
+        query: ".config.debug = true".to_string(),
+        operation: "write".to_string(),
+        output_format: "toml".to_string(),
+        in_place: true,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = nested_write.call_with_context(&context).await;
+    assert!(result.is_ok());
+    
+    // Verify the change
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert!(content.contains("debug = true"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tomlq_output_formats() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test TOML file
+    let toml_content = r#"
+[package]
+name = "test-pkg"
+version = "0.1.0"
+keywords = ["test", "example"]
+"#;
+    fs::write(temp_path.join("formats.toml"), toml_content).unwrap();
+    
+    // Test JSON output format
+    let json_tool = TomlQueryTool {
+        file_path: "formats.toml".to_string(),
+        query: ".package".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = json_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert!(output.contains(r#""name": "test-pkg""#));
+    assert!(output.contains(r#""version": "0.1.0""#));
+    
+    // Test TOML output format
+    let toml_tool = TomlQueryTool {
+        file_path: "formats.toml".to_string(),
+        query: ".package".to_string(),
+        operation: "read".to_string(),
+        output_format: "toml".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = toml_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert!(output.contains(r#"name = "test-pkg""#));
+    assert!(output.contains(r#"version = "0.1.0""#));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tomlq_error_handling() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Test file not found
+    let missing_tool = TomlQueryTool {
+        file_path: "nonexistent.toml".to_string(),
+        query: ".name".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = missing_tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    
+    // Test invalid TOML
+    fs::write(temp_path.join("invalid.toml"), "invalid = toml content").unwrap();
+    let invalid_tool = TomlQueryTool {
+        file_path: "invalid.toml".to_string(),
+        query: ".name".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = invalid_tool.call_with_context(&context).await;
+    assert!(result.is_err());
+    
+    // Test valid pipe operation (now supported with QueryEngine!)
+    let toml_content = r#"name = "test"
+value = 42
+enabled = true"#;
+    fs::write(temp_path.join("pipe.toml"), toml_content).unwrap();
+    
+    let pipe_tool = TomlQueryTool {
+        file_path: "pipe.toml".to_string(),
+        query: ". | keys".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = pipe_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    // Debug: print the actual output
+    eprintln!("Actual output: {}", output);
+    // Should return array of keys - check for the array structure
+    assert!(output.contains("[") && output.contains("]"));
+    assert!(output.contains("enabled") && output.contains("name") && output.contains("value"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_tomlq_advanced_queries() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test TOML file with more complex data
+    let toml_content = r#"
+[package]
+name = "test-pkg"
+version = "1.0.0"
+
+[[dependencies]]
+name = "serde"
+version = "1.0"
+
+[[dependencies]]
+name = "tokio"
+version = "1.0"
+
+[features]
+default = ["std"]
+std = []
+"#;
+    fs::write(temp_path.join("advanced.toml"), toml_content).unwrap();
+    
+    // Test that pipe operations now work
+    let pipe_tool = TomlQueryTool {
+        file_path: "advanced.toml".to_string(),
+        query: ". | keys".to_string(),
+        operation: "read".to_string(),
+        output_format: "json".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = pipe_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert!(output.contains("dependencies") && output.contains("features") && output.contains("package"));
+    
+    // Test basic functions work
+    let type_tool = TomlQueryTool {
+        file_path: "advanced.toml".to_string(),
+        query: ".package | type".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = type_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert_eq!(output.trim(), "object");
+    
+    // Test alternative operator
+    let alt_tool = TomlQueryTool {
+        file_path: "advanced.toml".to_string(),
+        query: ".nonexistent // \"default\"".to_string(),
+        operation: "read".to_string(),
+        output_format: "raw".to_string(),
+        in_place: false,
+        backup: false,
+        follow_symlinks: true,
+    };
+    
+    let result = alt_tool.call_with_context(&context).await;
+    assert!(result.is_ok());
+    let output = extract_text_content(&result.unwrap());
+    assert_eq!(output.trim(), "default");
+}

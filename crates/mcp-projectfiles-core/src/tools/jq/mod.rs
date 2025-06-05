@@ -1,12 +1,7 @@
-mod parser;
-mod executor;
-mod functions;
-mod operators;
-mod conditionals;
-
 use crate::context::{StatefulTool, ToolContext};
 use crate::config::tool_errors;
 use crate::tools::utils::resolve_path_for_read;
+use crate::tools::query_engine::{QueryEngine, QueryError};
 use async_trait::async_trait;
 use rust_mcp_schema::{
     CallToolResult, CallToolResultContentItem, TextContent, schema_utils::CallToolError,
@@ -16,8 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
-pub use executor::JsonQueryExecutor;
-
 #[derive(Error, Debug)]
 pub enum JsonQueryError {
     #[error("Error: projectfiles:jq - File not found: {0}")]
@@ -26,14 +19,11 @@ pub enum JsonQueryError {
     #[error("Error: projectfiles:jq - Invalid JSON in file {file}: {error}")]
     InvalidJson { file: String, error: String },
     
-    #[error("Error: projectfiles:jq - Invalid query syntax: {0}")]
-    InvalidQuery(String),
-    
-    #[error("Error: projectfiles:jq - Query execution failed: {0}")]
-    ExecutionError(String),
-    
     #[error("Error: projectfiles:jq - IO error: {0}")]
     IoError(String),
+    
+    #[error("Error: projectfiles:jq - {0}")]
+    QueryEngine(#[from] QueryError),
 }
 
 #[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax. Preferred tool for JSON manipulation in projects.
@@ -91,7 +81,7 @@ Safety:
 - When follow_symlinks is false, symlinked JSON files cannot be accessed
 - Optional backups for write operations (backup: true)
 - Atomic writes prevent corruption")]
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JsonQueryTool {
     /// Path to the JSON file (relative to project root)
     pub file_path: String,
@@ -126,8 +116,6 @@ fn default_follow_symlinks() -> bool {
     true
 }
 
-
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonQueryResult {
     pub result: serde_json::Value,
@@ -136,7 +124,6 @@ pub struct JsonQueryResult {
 }
 
 impl JsonQueryTool {
-
     fn read_json_file(&self, file_path: &Path) -> Result<serde_json::Value, JsonQueryError> {
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| {
@@ -147,11 +134,27 @@ impl JsonQueryTool {
                 }
             })?;
         
-        serde_json::from_str(&content)
-            .map_err(|e| JsonQueryError::InvalidJson {
-                file: file_path.display().to_string(),
-                error: e.to_string(),
-            })
+        serde_json::from_str(&content).map_err(|e| JsonQueryError::InvalidJson {
+            file: file_path.display().to_string(),
+            error: e.to_string(),
+        })
+    }
+    
+    fn write_json_file(&self, file_path: &Path, data: &serde_json::Value, backup: bool) -> Result<(), JsonQueryError> {
+        if backup && file_path.exists() {
+            let backup_path = file_path.with_extension(format!("{}.bak", 
+                file_path.extension().and_then(|s| s.to_str()).unwrap_or("json")));
+            std::fs::copy(file_path, backup_path)
+                .map_err(|e| JsonQueryError::IoError(format!("Failed to create backup: {}", e)))?;
+        }
+        
+        let content = match self.output_format.as_str() {
+            "compact" => serde_json::to_string(data),
+            _ => serde_json::to_string_pretty(data),
+        }.map_err(|e| JsonQueryError::IoError(format!("Failed to serialize JSON: {}", e)))?;
+        
+        std::fs::write(file_path, content)
+            .map_err(|e| JsonQueryError::IoError(e.to_string()))
     }
     
     fn format_output(&self, result: &serde_json::Value) -> String {
@@ -162,34 +165,16 @@ impl JsonQueryTool {
                     serde_json::Value::Number(n) => n.to_string(),
                     serde_json::Value::Bool(b) => b.to_string(),
                     serde_json::Value::Null => "null".to_string(),
-                    _ => serde_json::to_string_pretty(result).unwrap_or_default(),
+                    _ => serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".to_string()),
                 }
             }
-            "compact" => serde_json::to_string(result).unwrap_or_default(),
-            _ => serde_json::to_string_pretty(result).unwrap_or_default(),
+            "compact" => {
+                serde_json::to_string(result).unwrap_or_else(|_| "null".to_string())
+            }
+            _ => {
+                serde_json::to_string_pretty(result).unwrap_or_else(|_| "null".to_string())
+            }
         }
-    }
-    
-    fn write_json_file(&self, file_path: &Path, data: &serde_json::Value, backup: bool) -> Result<(), JsonQueryError> {
-        // Create backup if requested
-        if backup && file_path.exists() {
-            let backup_path = file_path.with_extension("json.bak");
-            std::fs::copy(file_path, backup_path)
-                .map_err(|e| JsonQueryError::IoError(format!("Failed to create backup: {}", e)))?;
-        }
-        
-        // Write atomically
-        let temp_path = file_path.with_extension(".tmp");
-        let content = serde_json::to_string_pretty(data)
-            .map_err(|e| JsonQueryError::IoError(format!("Failed to serialize JSON: {}", e)))?;
-        
-        std::fs::write(&temp_path, content)
-            .map_err(|e| JsonQueryError::IoError(format!("Failed to write temp file: {}", e)))?;
-        
-        std::fs::rename(&temp_path, file_path)
-            .map_err(|e| JsonQueryError::IoError(format!("Failed to rename file: {}", e)))?;
-        
-        Ok(())
     }
 }
 
@@ -212,11 +197,6 @@ impl StatefulTool for JsonQueryTool {
                 project_root.join(requested_path)
             };
             
-            // Check if file exists for write operations
-            if !absolute_path.exists() {
-                return Err(CallToolError::from(tool_errors::invalid_input("jq", &format!("File not found: {}", self.file_path))));
-            }
-            
             // Canonicalize the path to resolve all symlinks
             let canonical = absolute_path.canonicalize()
                 .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &format!("Failed to resolve path '{}': {}", self.file_path, e))))?;
@@ -236,37 +216,27 @@ impl StatefulTool for JsonQueryTool {
         // Read JSON file
         let mut data = self.read_json_file(&file_path).map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
         
-        let executor = JsonQueryExecutor::new();
+        let engine = QueryEngine::new();
         let result = match self.operation.as_str() {
             "write" => {
-                // For write operations, parse assignment and execute
-                match parser::parse_assignment(&self.query) {
-                    Ok(Some((path, value))) => {
-                        executor.set_path(&mut data, &path, value)
-                            .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
-                        
-                        if self.in_place {
-                            self.write_json_file(&file_path, &data, self.backup)
-                                .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
-                        }
-                        
-                        JsonQueryResult {
-                            result: data.clone(),
-                            output: self.format_output(&data),
-                            modified: true,
-                        }
-                    }
-                    Ok(None) => {
-                        return Err(CallToolError::from(tool_errors::invalid_input("jq", "Write operation requires an assignment expression")));
-                    }
-                    Err(e) => {
-                        return Err(CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())));
-                    }
+                // For write operations, use the query engine
+                engine.execute_write(&mut data, &self.query)
+                    .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+                
+                if self.in_place {
+                    self.write_json_file(&file_path, &data, self.backup)
+                        .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
+                }
+                
+                JsonQueryResult {
+                    result: data.clone(),
+                    output: self.format_output(&data),
+                    modified: true,
                 }
             }
             _ => {
                 // Read operation
-                let result = executor.execute_query(&data, &self.query)
+                let result = engine.execute(&data, &self.query)
                     .map_err(|e| CallToolError::from(tool_errors::invalid_input("jq", &e.to_string())))?;
                 
                 JsonQueryResult {

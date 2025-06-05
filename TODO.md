@@ -1,5 +1,97 @@
 # TODO
 
+## Query Engine Fixes to Test After Restart
+
+After recompiling and restarting the MCP server, test these fixes:
+
+1. **Mathematical Division Operations** - Fixed in `operations.rs` line 293
+   - Test: `.metrics.performance.response_times | add / length`
+   - Expected: Should calculate average (around 127.714...)
+
+2. **Length Function in Object Construction** - Fixed in `operations.rs` line 208
+   - Test: `.users | group_by(.active) | map({active: .[0].active, count: length})`
+   - Expected: Should return counts as numbers, not literal "length"
+
+3. **Map(select()) Filtering** - Fixed in `functions.rs` line 441
+   - Test: `.users | map(select(.active))`
+   - Expected: Should return only active users without null values
+
+4. **Array Iterator Support** - Already working
+   - Test: `.users[].name`
+   - Expected: Should return array of names
+
+5. **Array Slicing** - Already implemented
+   - Test: `.users[1:3]`
+   - Expected: Should return elements at indices 1 and 2
+
+## tomlq Tool Improvements (In Progress)
+
+### High Priority
+- [ ] Extract shared query execution logic from jq/yq into a common module to enable code reuse
+- [ ] Implement full jq-style query support to match yq/jq capabilities
+- [ ] Add comprehensive test coverage for all tomlq operations
+
+### Medium Priority
+- [ ] Implement array operations: map(), select(), filter(), sort(), sort_by(), add, min, max, unique, reverse, flatten, group_by(), indices(), array slicing
+- [ ] Implement string functions: split(), join(), trim(), contains(), startswith(), endswith(), test(), match(), case conversion, type conversion
+- [ ] Implement object operations: keys, values, has(), del(), to_entries, from_entries, with_entries(), paths, leaf_paths
+- [ ] Implement math and logic: arithmetic operators, math functions, if-then-else, boolean operators, null handling
+- [ ] Add pipe operation support (|) for chaining operations
+- [ ] Add recursive descent (..) and wildcard (.*) support
+- [ ] Add try-catch error handling
+
+### TOML-Specific Enhancements
+- [ ] Better handling of TOML datetime types
+- [ ] Preserve comments during in-place edits
+- [ ] Support for inline tables and array of tables
+- [ ] Additional TOML-specific formatting options
+
+### Documentation
+- [x] Update tomlq documentation to accurately reflect current capabilities
+- [ ] Add comprehensive examples once new features are implemented
+- [ ] Add "When to use" sections for different features
+
+## Touch Tool Improvements (Completed - Requires Restart)
+
+### Major Enhancements to Touch Tool
+
+- **Documentation**: Completely rewrote to match exemplary tools (read, edit, process, kill)
+  - Added structured sections: IMPORTANT, NOTE, HINT, Features, Parameters, Examples, Integration
+  - Added comprehensive examples in JSON format
+  - Added timestamp format documentation with date-only support
+  - Improved clarity with specific use cases
+
+- **New Features Implemented**:
+  - **content**: Initial content for new files (supports creating files with text)
+  - **encoding**: Support for utf-8, ascii, and latin1 encodings
+  - **dry_run**: Preview operations without making changes
+  - **Date-only timestamps**: Support for "2023-12-25" format (converts to midnight UTC)
+  - **Enhanced output**: Shows file size when creating with content
+  - **Better error messages**: Clear feedback for encoding issues
+
+- **Improvements**:
+  - More detailed output messages including bytes created
+  - Better handling of timestamp references
+  - Support for different text encodings with validation
+  - Dry run mode shows exactly what would be done
+
+- **Testing**:
+  - Added tests for content creation
+  - Added tests for dry run mode
+  - Added tests for date-only timestamp format
+  - Added tests for ASCII encoding validation
+  - Added tests for non-ASCII content with ASCII encoding (should fail)
+  - All 15 touch tool tests pass successfully
+
+### Future Touch Tool Enhancements to Consider:
+- Add batch operations to touch multiple files in one call
+- Support glob patterns for touching multiple files
+- Add chmod-like permissions setting for new files
+- Consider adding template support for new file content
+- Add option to preserve existing content when updating timestamps
+- Support for setting different times for created/accessed/modified
+- Integration with stat tool to show before/after timestamps
+
 ## Edit Tool Major Improvements (Completed - Requires Restart)
 
 ### Critical Bug Fix: replace_all Parameter

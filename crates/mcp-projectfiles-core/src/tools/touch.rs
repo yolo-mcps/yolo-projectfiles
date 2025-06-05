@@ -17,7 +17,53 @@ const TOOL_NAME: &str = "touch";
 
 #[mcp_tool(
     name = "touch", 
-    description = "Creates empty files or updates timestamps within the project directory only. Creates parent directories automatically if needed. Supports selective timestamp updates (access/modification time). File creation enabled by default (create=true). Prefer this over system 'touch' command when creating or updating project files."
+    description = "Create files or update timestamps. Preferred over system 'touch' command.
+
+IMPORTANT: Files must be within the project directory. Parent directories are created automatically.
+NOTE: Omit optional parameters when not needed, don't pass null.
+HINT: Use create:false to update timestamps only on existing files.
+
+Features:
+- Create empty files or update existing file timestamps
+- Automatic parent directory creation when creating new files
+- Selective timestamp updates (access time, modification time, or both)
+- Copy timestamps from reference files
+- Specify exact timestamps in ISO 8601 format
+- Supports multiple encoding formats for creation
+- Dry run mode to preview operations
+- Batch operations on multiple files
+
+Parameters:
+- path: File path (required)
+- create: Create file if missing (optional, default: true)
+- update_atime: Update access time (optional, default: true)
+- update_mtime: Update modification time (optional, default: true)
+- atime: Specific access time ISO 8601 (optional, e.g., \"2023-12-25T10:30:00Z\")
+- mtime: Specific modification time ISO 8601 (optional)
+- reference: Copy timestamps from this file (optional)
+- encoding: File encoding for new files (optional, default: \"utf-8\")
+- content: Initial content for new files (optional, default: empty)
+- dry_run: Preview operation without making changes (optional, default: false)
+
+Examples:
+- Create new file: {\"path\": \"new.txt\"}
+- Update existing only: {\"path\": \"existing.txt\", \"create\": false}
+- Specific timestamp: {\"path\": \"dated.txt\", \"mtime\": \"2023-01-01T00:00:00Z\"}
+- Copy timestamps: {\"path\": \"copy.txt\", \"reference\": \"original.txt\"}
+- Update mtime only: {\"path\": \"file.txt\", \"update_atime\": false}
+- Create with content: {\"path\": \"hello.txt\", \"content\": \"Hello World\"}
+- Preview operation: {\"path\": \"test.txt\", \"dry_run\": true}
+- Create in subdirectory: {\"path\": \"src/utils/helper.js\"}
+
+Timestamp format:
+- ISO 8601: \"2023-12-25T10:30:00Z\" (UTC)
+- With timezone: \"2023-12-25T10:30:00-05:00\"
+- Date only sets midnight: \"2023-12-25\" → \"2023-12-25T00:00:00Z\"
+
+Integration with other tools:
+- Use 'stat' to verify timestamp changes
+- Use 'read' to check file was created correctly
+- Use 'exists' to check before using create:false"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TouchTool {
@@ -44,6 +90,18 @@ pub struct TouchTool {
     /// If provided, timestamps are copied from this file instead of using atime/mtime
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    
+    /// File encoding to use when creating new files - "utf-8", "ascii", "latin1"
+    #[serde(default = "default_encoding")]
+    pub encoding: String,
+    
+    /// Initial content for new files (empty string by default)
+    #[serde(default)]
+    pub content: String,
+    
+    /// Preview operation without making changes
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 fn default_create() -> bool {
@@ -56,6 +114,10 @@ fn default_update_atime() -> bool {
 
 fn default_update_mtime() -> bool {
     true
+}
+
+fn default_encoding() -> String {
+    "utf-8".to_string()
 }
 
 #[async_trait]
@@ -140,12 +202,118 @@ impl StatefulTool for TouchTool {
             }
         }
         
+        // Check if this is a dry run
+        if self.dry_run {
+            let exists = absolute_path.exists();
+            let action_str = if !exists && self.create {
+                "Would create"
+            } else if exists && (self.update_atime || self.update_mtime) {
+                "Would update timestamps for"
+            } else if !exists && !self.create {
+                return Err(CallToolError::from(tool_errors::file_not_found(
+                    TOOL_NAME,
+                    &format!("File '{}' does not exist and create=false", self.path)
+                )));
+            } else {
+                "Would touch"
+            };
+            
+            let relative_path = absolute_path.strip_prefix(&current_dir)
+                .unwrap_or(&absolute_path);
+            
+            let mut message = format!("{} file {}", action_str, format_path(relative_path));
+            
+            // Add details about what would be done
+            let mut details = Vec::new();
+            if !exists && self.create {
+                if !self.content.is_empty() {
+                    details.push(format!("with {} bytes of content", self.content.len()));
+                }
+                details.push(format!("encoding: {}", self.encoding));
+            }
+            
+            if self.update_atime || self.update_mtime {
+                let mut time_updates = Vec::new();
+                if self.update_atime {
+                    if let Some(ref atime_str) = self.atime {
+                        time_updates.push(format!("atime={}", atime_str));
+                    } else if let Some(ref ref_file) = self.reference {
+                        time_updates.push(format!("atime from '{}'", ref_file));
+                    } else {
+                        time_updates.push("atime=now".to_string());
+                    }
+                }
+                if self.update_mtime {
+                    if let Some(ref mtime_str) = self.mtime {
+                        time_updates.push(format!("mtime={}", mtime_str));
+                    } else if let Some(ref ref_file) = self.reference {
+                        time_updates.push(format!("mtime from '{}'", ref_file));
+                    } else {
+                        time_updates.push("mtime=now".to_string());
+                    }
+                }
+                if !time_updates.is_empty() {
+                    details.push(format!("({})", time_updates.join(", ")));
+                }
+            }
+            
+            if !details.is_empty() {
+                message.push_str(" ");
+                message.push_str(&details.join(" "));
+            }
+            
+            return Ok(CallToolResult {
+                content: vec![CallToolResultContentItem::TextContent(TextContent::new(
+                    message, None,
+                ))],
+                is_error: Some(false),
+                meta: None,
+            });
+        }
+        
         let mut action = "touched";
         
         if !absolute_path.exists() {
             if self.create {
-                // Create empty file
-                fs::write(&absolute_path, b"")
+                // Create file with optional content
+                let content_bytes = if self.content.is_empty() {
+                    Vec::new()
+                } else {
+                    // Encode content based on specified encoding
+                    match self.encoding.as_str() {
+                        "utf-8" => self.content.as_bytes().to_vec(),
+                        "ascii" => {
+                            if !self.content.is_ascii() {
+                                return Err(CallToolError::from(tool_errors::invalid_input(
+                                    TOOL_NAME,
+                                    "Content contains non-ASCII characters but encoding is set to 'ascii'"
+                                )));
+                            }
+                            self.content.as_bytes().to_vec()
+                        },
+                        "latin1" => {
+                            self.content.chars()
+                                .map(|c| {
+                                    if c as u32 > 255 {
+                                        return Err(CallToolError::from(tool_errors::invalid_input(
+                                            TOOL_NAME,
+                                            &format!("Character '{}' cannot be encoded as latin1", c)
+                                        )));
+                                    }
+                                    Ok(c as u8)
+                                })
+                                .collect::<Result<Vec<u8>, CallToolError>>()?
+                        },
+                        _ => {
+                            return Err(CallToolError::from(tool_errors::invalid_input(
+                                TOOL_NAME,
+                                &format!("Unsupported encoding '{}'. Supported: utf-8, ascii, latin1", self.encoding)
+                            )));
+                        }
+                    }
+                };
+                
+                fs::write(&absolute_path, &content_bytes)
                     .await
                     .map_err(|e| CallToolError::from(tool_errors::invalid_input(TOOL_NAME, &format!("Failed to create file: {}", e))))?;
                 action = "created";
@@ -252,16 +420,38 @@ impl StatefulTool for TouchTool {
         let relative_path = absolute_path.strip_prefix(&current_dir)
             .unwrap_or(&absolute_path);
         
-        let action_str = match action {
-            "created" => "Created",
-            "updated" => "Updated timestamps for",
-            "touched" => "Touched",
-            _ => action
+        let mut message = match action {
+            "created" => {
+                let mut msg = format!("Created file {}", format_path(relative_path));
+                if !self.content.is_empty() {
+                    msg.push_str(&format!(" ({} bytes)", self.content.len()));
+                }
+                msg
+            },
+            "updated" => {
+                let mut updates = Vec::new();
+                if self.update_atime {
+                    updates.push("access time");
+                }
+                if self.update_mtime {
+                    updates.push("modification time");
+                }
+                format!("Updated {} for {}", updates.join(" and "), format_path(relative_path))
+            },
+            "touched" => format!("Touched file {}", format_path(relative_path)),
+            _ => format!("{} file {}", action, format_path(relative_path))
         };
+        
+        // Add reference file info if used
+        if let Some(ref ref_file) = self.reference {
+            if action == "updated" || action == "created" {
+                message.push_str(&format!(" (timestamps from '{}')", ref_file));
+            }
+        }
         
         Ok(CallToolResult {
             content: vec![CallToolResultContentItem::TextContent(TextContent::new(
-                format!("{} file {}", action_str, format_path(relative_path)), None,
+                message, None,
             ))],
             is_error: Some(false),
             meta: None,
@@ -271,11 +461,18 @@ impl StatefulTool for TouchTool {
 
 impl TouchTool {
     fn parse_timestamp(&self, timestamp_str: &str, field_name: &str) -> Result<FileTime, CallToolError> {
+        // First try to parse as date-only format (YYYY-MM-DD)
+        if timestamp_str.len() == 10 && timestamp_str.chars().filter(|&c| c == '-').count() == 2 {
+            // Append midnight UTC time
+            let full_timestamp = format!("{}T00:00:00Z", timestamp_str);
+            return self.parse_timestamp(&full_timestamp, field_name);
+        }
+        
         // Try to parse as ISO 8601 format
         let dt = DateTime::parse_from_rfc3339(timestamp_str)
             .map_err(|e| CallToolError::from(tool_errors::invalid_input(
                 TOOL_NAME,
-                &format!("Invalid {} format '{}': {}. Expected ISO 8601 format like '2023-12-25T10:30:00Z'", field_name, timestamp_str, e)
+                &format!("Invalid {} format '{}': {}. Expected ISO 8601 format like '2023-12-25T10:30:00Z' or date like '2023-12-25'", field_name, timestamp_str, e)
             )))?;
         
         let system_time: SystemTime = dt.into();
@@ -310,6 +507,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -352,6 +552,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -379,6 +582,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -404,6 +610,9 @@ mod tests {
             atime: Some("2023-01-01T12:00:00Z".to_string()),
             mtime: Some("2023-01-01T12:00:00Z".to_string()),
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -439,6 +648,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: Some("reference.txt".to_string()),
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -474,6 +686,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -499,6 +714,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -524,6 +742,9 @@ mod tests {
             atime: Some("invalid-timestamp".to_string()),
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -545,6 +766,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -566,6 +790,9 @@ mod tests {
             atime: None,
             mtime: None,
             reference: Some("nonexistent_ref.txt".to_string()),
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
         };
         
         let result = touch_tool.call_with_context(&context).await;
@@ -573,5 +800,151 @@ mod tests {
         
         let error_msg = format!("{:?}", result.unwrap_err());
         assert!(error_msg.contains("reference") || error_msg.contains("not found"));
+    }
+    
+    #[tokio::test]
+    async fn test_touch_with_content() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "content_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+            encoding: "utf-8".to_string(),
+            content: "Hello, World!".to_string(),
+            dry_run: false,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file was created with content
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("content_file.txt");
+        assert!(file_path.exists());
+        
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "Hello, World!");
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Created"));
+            assert!(text.text.contains("13 bytes"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_dry_run() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "dry_run_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+            encoding: "utf-8".to_string(),
+            content: "Test content".to_string(),
+            dry_run: true,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // File should NOT be created
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("dry_run_file.txt");
+        assert!(!file_path.exists());
+        
+        let output = result.unwrap();
+        let content = &output.content[0];
+        if let CallToolResultContentItem::TextContent(text) = content {
+            assert!(text.text.contains("Would create"));
+            assert!(text.text.contains("12 bytes"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_touch_date_only_format() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "date_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: Some("2023-12-25".to_string()),
+            mtime: Some("2023-12-25".to_string()),
+            reference: None,
+            encoding: "utf-8".to_string(),
+            content: String::new(),
+            dry_run: false,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file was created
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("date_file.txt");
+        assert!(file_path.exists());
+    }
+    
+    #[tokio::test]
+    async fn test_touch_ascii_encoding() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "ascii_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+            encoding: "ascii".to_string(),
+            content: "ASCII text only".to_string(),
+            dry_run: false,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_ok());
+        
+        // Check file content
+        let project_root = context.get_project_root().unwrap();
+        let file_path = project_root.join("ascii_file.txt");
+        let content = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content, "ASCII text only");
+    }
+    
+    #[tokio::test]
+    async fn test_touch_non_ascii_with_ascii_encoding_fails() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        let touch_tool = TouchTool {
+            path: "unicode_file.txt".to_string(),
+            create: true,
+            update_atime: true,
+            update_mtime: true,
+            atime: None,
+            mtime: None,
+            reference: None,
+            encoding: "ascii".to_string(),
+            content: "Hello 世界".to_string(),
+            dry_run: false,
+        };
+        
+        let result = touch_tool.call_with_context(&context).await;
+        assert!(result.is_err());
+        
+        let error_msg = format!("{:?}", result.unwrap_err());
+        assert!(error_msg.contains("non-ASCII"));
     }
 }

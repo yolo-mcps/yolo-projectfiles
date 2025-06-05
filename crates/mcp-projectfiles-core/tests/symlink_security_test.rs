@@ -197,6 +197,9 @@ async fn test_touch_tool_blocks_symlink_path() {
         atime: None,
         mtime: None,
         reference: None,
+        encoding: "utf-8".to_string(),
+        content: String::new(),
+        dry_run: false,
     };
     
     let result = touch_tool.call_with_context(&context).await;

@@ -1170,6 +1170,7 @@ async fn test_boolean_operators() {
     });
     create_test_file(&temp_dir, "test.json", &content.to_string()).await;
     
+    
     // Test AND operator
     let tool = JsonQueryTool {
         file_path: "test.json".to_string(),
