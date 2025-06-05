@@ -1,0 +1,20 @@
+[package]
+name = "yolo-homefiles"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "MCP server for home directory file operations"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+mcp-projectfiles-core = { path = "../mcp-projectfiles-core" }
+clap = { version = "4.5.23", features = ["derive"] }
+tokio = { version = "1.37.0", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+
+[[bin]]
+name = "yolo-homefiles"
+path = "src/main.rs"

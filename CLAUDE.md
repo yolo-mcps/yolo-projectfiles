@@ -19,8 +19,9 @@ might have access to files outside the current project directory.
 
 ### Installation and Development Tasks
 
-- `cargo xtask install` - Install the binary (equivalent to `cargo install --path crates/mcp-projectfiles-bin`)
-- `cargo install --path crates/mcp-projectfiles-bin` - Install the mcp-projectfiles binary
+- `cargo xtask install` - Install all binary crates in the workspace
+- `cargo xtask install <crate-name>` - Install a specific binary crate (e.g., `cargo xtask install yolo-projectfiles`)
+- `cargo install --path crates/<crate-name>` - Install a specific crate directly
 
 ### Testing with External Tools
 
@@ -40,7 +41,12 @@ This is a Rust workspace implementing an MCP (Model Context Protocol) server wit
 ### Workspace Structure
 
 - **mcp-projectfiles-core** - Core library containing the protocol implementation, server logic, and built-in tools
-- **mcp-projectfiles-bin** - Binary application providing the CLI interface
+- **mcp-projectfiles-bin** - Original binary application providing the CLI interface
+- **yolo-projectfiles** - MCP server for project file operations
+- **yolo-homefiles** - MCP server for home directory file operations
+- **yolo-executioner** - MCP server for process execution and management
+- **yolo-terminator** - MCP server for process termination and cleanup
+- **yolo-memento** - MCP server for state persistence and memory
 - **xtask** - Development automation tasks (cargo xtask install)
 
 ### Core Components

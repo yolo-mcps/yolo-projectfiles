@@ -680,11 +680,32 @@ dependencies = [
 
 [[package]]
 name = "dirs"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
+dependencies = [
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys",
+ "dirs-sys 0.5.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.4.6",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -695,7 +716,7 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.5.0",
  "windows-sys 0.59.0",
 ]
 
@@ -1534,7 +1555,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm 0.29.0",
- "dirs",
+ "dirs 6.0.0",
  "inquire",
  "mcp-projectfiles-core",
  "ratatui",
@@ -1981,6 +2002,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "928fca9cf2aa042393a8325b9ead81d2f0df4cb12e1e24cef072922ccd99c5af"
 dependencies = [
  "bitflags 2.9.1",
+]
+
+[[package]]
+name = "redox_users"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
+dependencies = [
+ "getrandom 0.2.16",
+ "libredox",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3544,6 +3576,67 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
+]
+
+[[package]]
+name = "yolo-executioner"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mcp-projectfiles-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "yolo-homefiles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 5.0.1",
+ "mcp-projectfiles-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "yolo-memento"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mcp-projectfiles-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "yolo-projectfiles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mcp-projectfiles-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "yolo-terminator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mcp-projectfiles-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

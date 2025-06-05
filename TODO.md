@@ -13,6 +13,34 @@
 ### Known Issues
 - ⚠️ 5 failing jq tests related to select() and comparison operations need to be fixed
 
+## Projectfiles Tool Selection Improvement
+
+### Issue: Write tool is chosen over projectfiles:write
+When creating new files, the built-in Write tool is sometimes selected instead of projectfiles:write, even though projectfiles:write has more features and is preferred per CLAUDE.md.
+
+### Suggested Improvement:
+The projectfiles:write tool description could be enhanced to make it more discoverable:
+
+1. **Add "create" keyword**: Update description from "Write or append content to files" to "Create, write or append content to files" - this makes it clear it can create new files, matching the Write tool's capability.
+
+2. **Emphasize relative path advantage**: Add to the description or early in docs that it uses project-relative paths, which is more convenient than absolute paths required by Write tool.
+
+3. **Consider tool name alias**: Add an alias like "create" or "write_file" to make it more discoverable when looking for file creation tools.
+
+4. **Update CLAUDE.md guidance**: Add explicit instruction: "When creating new files, always use projectfiles:write instead of the built-in Write tool, as it supports relative paths and additional safety features."
+
+This would help ensure projectfiles tools are consistently chosen over built-in alternatives.
+
+## Write Tool Enhancement
+
+### Issue: Write tool requires reading file first for existing files
+When attempting to write to a file that doesn't exist, the write tool returns an error saying the file must be read first. This is counterintuitive for file creation.
+
+### Suggested Improvement:
+The projectfiles:write tool should automatically create new files when they don't exist, rather than requiring them to be read first. This would match the behavior of the built-in Write tool and standard file writing operations in most programming languages.
+
+Implementation: Update the write tool to check if the file exists, and if not, simply create it with the provided content instead of returning an error.
+
 ## Query Engine Fixes to Test After Restart
 
 After recompiling and restarting the MCP server, test these fixes:
