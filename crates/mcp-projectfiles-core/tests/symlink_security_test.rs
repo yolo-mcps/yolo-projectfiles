@@ -170,6 +170,11 @@ async fn test_write_tool_blocks_symlink_path() {
         append: false,
         backup: false,
         encoding: "utf-8".to_string(),
+        follow_symlinks: true,
+        show_diff: false,
+        dry_run: false,
+        force: false,
+        include_metadata: false,
     };
     
     let result = write_tool.call_with_context(&context).await;
@@ -396,6 +401,11 @@ async fn test_nested_symlink_blocked() {
         append: false,
         backup: false,
         encoding: "utf-8".to_string(),
+        follow_symlinks: true,
+        show_diff: false,
+        dry_run: false,
+        force: false,
+        include_metadata: false,
     };
     
     let result = write_tool.call_with_context(&context).await;
@@ -421,6 +431,11 @@ async fn test_symlink_to_parent_directory_blocked() {
         append: false,
         backup: false,
         encoding: "utf-8".to_string(),
+        follow_symlinks: true,
+        show_diff: false,
+        dry_run: false,
+        force: false,
+        include_metadata: false,
     };
     
     let result = write_tool.call_with_context(&context).await;

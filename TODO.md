@@ -1,5 +1,85 @@
 # TODO
 
+## WC Tool Improvements (Completed - Requires Restart)
+
+### Major Enhancements to WC Tool
+
+- **Documentation**: Completely rewrote to match exemplary tools (read, edit, process)
+  - Added structured sections: IMPORTANT, NOTE, HINT, Features, Parameters, Examples, Returns
+  - Added comprehensive parameter documentation with types and defaults
+  - Added extensive examples showing different use cases in JSON format
+  - Added clear description of output formats and error conditions
+
+- **New Features Implemented**:
+  - **max_line_length**: Reports the length of the longest line (useful for code style checks)
+  - **include_metadata**: Includes file metadata (size, modified time, encoding)
+  - **output_format**: Supports "text" and "json" output formats for programmatic use
+  - **encoding**: Supports multiple encodings (utf-8, ascii, latin1) like read/write tools
+  - **Binary file detection**: Gracefully handles binary files with appropriate error messages
+
+- **Improvements**:
+  - Enhanced output formatting with aligned columns and human-readable byte sizes
+  - JSON output includes structured data with optional fields based on requested counts
+  - Better error messages with consistent tool error prefixes
+  - Improved test coverage including all new features
+
+- **Testing**:
+  - Added tests for max_line_length feature
+  - Added tests for JSON output format
+  - Added tests for metadata inclusion
+  - Added tests for different encodings
+  - Added tests for binary file detection
+  - Added tests for invalid parameters
+  - Refactored tests with helper function for cleaner code
+
+### Future WC Tool Enhancements to Consider:
+- Add pattern parameter to count only lines matching a regex (complement to grep)
+- Support for counting multiple files in one call with summary statistics
+- Add Unicode grapheme cluster counting option (vs just code points)
+- Character/word frequency analysis modes
+- Progress reporting for very large files
+- Streaming mode to handle files larger than memory
+- Integration with find tool for batch operations
+- Performance optimizations for large file handling
+
+# TODO
+
+## Write Tool Improvements (Completed - Requires Restart)
+
+### Major Enhancements to Write Tool
+
+- **Documentation**: Completely rewrote to match exemplary tools (read, edit, process)
+  - Added structured sections: IMPORTANT, NOTE, HINT, Features, Parameters, Examples
+  - Added "When to use" guidance for show_diff and dry_run modes
+  - Added integration notes explaining how read/write/edit work together
+  - Comprehensive examples covering all major use cases
+
+- **New Features**:
+  - **dry_run mode**: Preview operations without actually writing files
+  - **show_diff mode**: Display colored diffs when overwriting files (using theme system)
+  - **follow_symlinks**: Explicit control over symlink behavior (matching read tool)
+  - **force flag**: Override file size safety limits (100MB default)
+  - **include_metadata**: Return detailed operation metadata in JSON format
+
+- **Improvements**:
+  - Better path resolution using same logic as read tool for consistency
+  - Enhanced error messages with specific guidance
+  - Improved output formatting with operation type (Created/Wrote/Appended/Would write)
+  - Added file size safety check with configurable override
+  - Colored diff output respecting terminal capabilities and themes
+  - Metadata includes timestamps, sizes, encoding info, and backup details
+
+- **Testing**:
+  - Added comprehensive tests for all new features
+  - Tests for dry_run, show_diff, metadata, and force modes
+  - Refactored tests to use helper function for cleaner code
+
+### Harmonious Integration of Read/Write/Edit
+- All three tools now use consistent path resolution logic
+- Shared symlink handling behavior with follow_symlinks parameter
+- Consistent error messaging patterns
+- Complementary features: read for viewing, edit for modifications, write for full replacement
+
 ## Recent Improvements (Requires Restart)
 
 ### Stat Tool Enhancements
