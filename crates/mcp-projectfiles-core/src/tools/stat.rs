@@ -19,7 +19,54 @@ fn default_follow_symlinks() -> bool {
 
 #[mcp_tool(
     name = "stat",
-    description = "Gets detailed file or directory metadata (size, permissions, timestamps) within the project directory. Supports symlink handling with configurable behavior. Can follow symlinks to get metadata of files outside the project directory. When follow_symlinks is false, returns metadata of the symlink itself rather than its target. Replaces the need for 'ls -la' or 'stat' commands."
+    description = "Get detailed file or directory metadata. Preferred over system 'stat' or 'ls -la' commands.
+
+IMPORTANT: Supports both files and directories. Can follow symlinks to access files outside project directory.
+NOTE: Omit optional parameters when not needed, don't pass null.
+
+Parameters:
+- path: File or directory path to analyze (required)
+- follow_symlinks: Follow symlinks to target (optional, default: true)
+
+Features:
+- File type detection (file, directory, symlink, other)
+- Size information with human-readable formatting
+- Timestamps (created, modified, accessed) in local timezone
+- Unix permissions in both octal and symbolic format
+- Ownership information (uid, gid)
+- Symlink handling with configurable behavior
+- Inode and device information
+
+Examples:
+- Basic file stat: {\"path\": \"README.md\"}
+- Directory metadata: {\"path\": \"src/\"}
+- Check symlink itself: {\"path\": \"link.txt\", \"follow_symlinks\": false}
+- Follow symlink to target: {\"path\": \"link.txt\", \"follow_symlinks\": true}
+
+Returns JSON with:
+- path: Original path provided
+- absolute_path: Resolved absolute path
+- exists: Always true (fails if file doesn't exist)
+- type: \"file\", \"directory\", \"symlink\", or \"other\"
+- size: Size in bytes
+- size_human: Human-readable size (e.g., \"1.5 KB\")
+- is_file/is_dir/is_symlink: Boolean type indicators
+- readonly: Whether file is read-only
+- modified: Last modification time (YYYY-MM-DD HH:MM:SS)
+- modified_timestamp: Unix timestamp
+- accessed: Last access time (if available)
+- created: Creation time (if available)
+- Unix-specific fields (when on Unix):
+  - mode: Octal permissions (e.g., \"755\")
+  - permissions: Symbolic permissions (e.g., \"rwxr-xr-x\")
+  - uid/gid: Owner and group IDs
+  - nlink: Number of hard links
+  - dev/ino: Device and inode numbers
+
+Platform notes:
+- Unix/Linux/macOS: Full permission and ownership information
+- Windows: Limited permission information (readonly flag only)
+- Creation time may not be available on all platforms"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct StatTool {
@@ -73,6 +120,18 @@ impl StatefulTool for StatTool {
             "is_symlink": metadata.is_symlink(),
             "readonly": metadata.permissions().readonly(),
         });
+        
+        // If it's a symlink and we're not following, try to get the target
+        if metadata.is_symlink() {
+            match fs::read_link(&resolved_path).await {
+                Ok(target) => {
+                    result["symlink_target"] = serde_json::Value::String(target.display().to_string());
+                }
+                Err(_) => {
+                    // Ignore errors reading symlink target
+                }
+            }
+        }
         
         // Add timestamps
         if let Ok(modified) = metadata.modified() {
@@ -532,7 +591,42 @@ mod tests {
             // Should show some valid stats for the symlink
             assert!(text.text.contains("link.txt"));
             assert!(text.text.contains("\"type\":"));
-            // Test that we can get stats when follow_symlinks=false
+            // Should show symlink target
+            assert!(text.text.contains("\"symlink_target\":"));
+            assert!(text.text.contains("target.txt"));
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_stat_special_filenames() {
+        let (context, _temp_dir) = setup_test_context().await;
+        
+        // Test files with special characters
+        let project_root = context.get_project_root().unwrap();
+        let test_names = vec![
+            "file with spaces.txt",
+            "file-with-dashes.txt",
+            "file_with_underscores.txt",
+            "file.multiple.dots.txt",
+        ];
+        
+        for name in test_names {
+            fs::write(project_root.join(name), "test content").await.unwrap();
+            
+            let stat_tool = StatTool {
+                path: name.to_string(),
+                follow_symlinks: false,
+            };
+            
+            let result = stat_tool.call_with_context(&context).await;
+            assert!(result.is_ok(), "Failed to stat file: {}", name);
+            
+            let output = result.unwrap();
+            let content = &output.content[0];
+            if let CallToolResultContentItem::TextContent(text) = content {
+                assert!(text.text.contains(name));
+                assert!(text.text.contains("\"type\": \"file\""));
+            }
         }
     }
     

@@ -2,6 +2,37 @@
 
 ## Recent Improvements (Requires Restart)
 
+### Stat Tool Enhancements
+
+- **Documentation**: Completely rewrote to match exemplary tools (edit, process, lsof, kill)
+  - Added structured sections: IMPORTANT, NOTE, Parameters, Features, Examples, Returns, Platform notes
+  - Added comprehensive JSON examples showing different use cases
+  - Added detailed field descriptions for all return values
+  - Improved clarity around symlink behavior and platform differences
+
+- **New Features**:
+  - **Symlink target resolution**: Added `symlink_target` field when stat'ing a symlink
+  - Shows the path the symlink points to (useful for debugging symlink issues)
+
+- **Test Improvements**:
+  - Added test for special filenames (spaces, dots, dashes, underscores)
+  - Enhanced symlink test to verify symlink_target field is returned
+  - Improved test coverage for edge cases
+
+- **Requires restart to see the improved documentation and symlink_target feature**
+
+#### Future Stat Tool Enhancements to Consider:
+- Add executable detection for files (check execute permissions)
+- Add file type detection for sockets, FIFOs, block/character devices
+- Consider batch operations to stat multiple files in one call
+- Add extended attributes (xattr) support for systems that have them
+- Consider adding optional hash calculation (MD5/SHA) integration
+- Add comparison mode to compare metadata between two files
+- Improve Windows support with Windows-specific metadata
+- Add support for showing ACLs on systems that support them
+
+## Recent Improvements (Requires Restart)
+
 ### Edit Tool Enhancements
 
 - Added detailed error messages when multiple occurrences are found
