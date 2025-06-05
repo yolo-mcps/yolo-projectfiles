@@ -19,46 +19,8 @@ fn default_follow_symlinks() -> bool {
 
 #[mcp_tool(
     name = "file",
-    description = "Analyze file type, encoding, and content classification. Preferred over system 'file' command.
-
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File to analyze (required)
-- follow_symlinks: Follow symlinks to analyze files outside project directory (optional, default: true). When false, symlinks cannot be analyzed.
-
-Features:
-- Text vs binary detection based on content analysis
-- Encoding detection (UTF-8, ASCII, UTF-16, etc.)
-- MIME type identification from extension and magic bytes
-- BOM (Byte Order Mark) detection for Unicode files
-- Human-readable file size formatting
-- Magic byte analysis for images, archives, documents
-- Line ending detection (LF, CRLF)
-- Shebang detection for executable scripts
-- Programming language identification
-- Preview of first 5 lines for text files
-
-Examples:
-- Analyze text file: {\"path\": \"README.md\"}
-- Check binary file: {\"path\": \"data.bin\"}
-- Detect image type: {\"path\": \"logo.png\"}
-- Without symlinks: {\"path\": \"link.txt\", \"follow_symlinks\": false}
-
-Returns JSON with:
-- path: Original file path
-- is_text/is_binary: Content classification
-- encoding: Detected encoding (e.g., \"UTF-8\", \"binary\")
-- mime_type: MIME type (e.g., \"text/plain\", \"image/png\")
-- size: File size in bytes
-- size_human: Formatted size (e.g., \"2.5 KB\")
-- has_bom: Whether file has BOM
-- bom_type: Type of BOM if present
-- extension: File extension if any
-- line_ending: Line ending type (LF/CRLF) for text files
-- shebang: Shebang line if present for scripts
-- language: Detected programming language
-- preview_lines: First 5 lines for text files"
+    description = "Analyze file type, encoding, and content. Binary detection, MIME types, language identification.
+Examples: {\"path\": \"README.md\"} or {\"path\": \"logo.png\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FileTool {

@@ -4,12 +4,14 @@ use super::errors::QueryError;
 pub struct QueryParser;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ParsedQuery {
     pub raw: String,
     pub query_type: QueryType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum QueryType {
     Path(String),
     Pipe(Vec<String>),
@@ -237,6 +239,7 @@ impl QueryParser {
     }
     
     /// Parse path with array/object access
+    #[allow(dead_code)]
     pub fn parse_complex_path(&self, path: &str) -> Result<Vec<PathSegment>, QueryError> {
         let mut segments = Vec::new();
         let mut current = String::new();
@@ -319,6 +322,7 @@ impl QueryParser {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum PathSegment {
     Field(String),
     ArrayIndex(usize),

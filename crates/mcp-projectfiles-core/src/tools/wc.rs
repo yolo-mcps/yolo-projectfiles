@@ -16,38 +16,8 @@ const TOOL_NAME: &str = "wc";
 
 #[mcp_tool(
     name = "wc",
-    description = "Count lines, words, characters, and bytes in text files. Preferred over system 'wc' command.
-
-IMPORTANT: Binary files are detected and handled gracefully with appropriate error messages.
-NOTE: Omit optional parameters when not needed, don't pass null.
-HINT: Use with grep to count matches, or with find to analyze multiple files.
-
-Parameters:
-- path: File path (required)
-- count_lines: Count lines (optional, default: true)
-- count_words: Count words (optional, default: true)
-- count_chars: Count characters (optional, default: true)
-- count_bytes: Count bytes (optional, default: false)
-- max_line_length: Report longest line length (optional, default: false)
-- encoding: Text encoding - \"utf-8\", \"ascii\", \"latin1\" (optional, default: \"utf-8\")
-- output_format: Output format - \"text\" or \"json\" (optional, default: \"text\")
-- include_metadata: Include file metadata (optional, default: false)
-- follow_symlinks: Follow symlinks to count files outside project (optional, default: true)
-
-Examples:
-- Basic count: {\"path\": \"README.md\"}
-- Count only lines: {\"path\": \"src/main.rs\", \"count_lines\": true, \"count_words\": false, \"count_chars\": false}
-- Include bytes: {\"path\": \"data.txt\", \"count_bytes\": true}
-- Check line length: {\"path\": \"code.py\", \"max_line_length\": true}
-- JSON output: {\"path\": \"stats.log\", \"output_format\": \"json\"}
-- With metadata: {\"path\": \"report.txt\", \"include_metadata\": true}
-- Different encoding: {\"path\": \"legacy.txt\", \"encoding\": \"latin1\"}
-
-Returns:
-- Text format: Human-readable counts with labels
-- JSON format: Structured data with all requested counts
-- Metadata includes: size, modified time, encoding info
-- Error for binary files or invalid paths"
+    description = "Count lines, words, characters, bytes in text files. Max line length, multiple encodings.
+Examples: {\"path\": \"README.md\"} or {\"path\": \"stats.log\", \"output_format\": \"json\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WcTool {

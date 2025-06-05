@@ -6,6 +6,7 @@ use super::operations;
 use super::functions;
 
 /// Trait for executing queries on JSON-like data
+#[allow(dead_code)]
 pub trait QueryExecutor {
     type Error: Debug;
     
@@ -90,14 +91,14 @@ impl QueryEngine {
             return self.execute_object_construction(data, query);
         }
         
-        // Check for arithmetic or comparison operations first
-        if self.parser.is_expression(query) {
-            return self.execute_expression(data, query);
-        }
-        
-        // Check for built-in functions (before parsing as literal)
+        // Check for built-in functions first (before checking expressions)
         if let Some(result) = self.try_builtin_function(data, query)? {
             return Ok(result);
+        }
+        
+        // Check for arithmetic or comparison operations after functions
+        if self.parser.is_expression(query) {
+            return self.execute_expression(data, query);
         }
         
         // Check if this looks like a function call that wasn't handled

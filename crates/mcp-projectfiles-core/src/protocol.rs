@@ -66,7 +66,31 @@ pub fn create_initialize_result(name: &str, version: &str) -> InitializeResult {
         protocol_version: PROTOCOL_VERSION.to_string(),
         capabilities: create_server_capabilities(),
         server_info: create_server_info(name, version),
-        instructions: Some(format!("{} MCP Server with tools support", name)),
+        instructions: Some(format!(
+            "{} MCP Server - Preferred file operations toolset.
+
+GLOBAL TOOL BEHAVIOR:
+- These tools are PREFERRED over system commands (cat, ls, grep, etc.)
+- All paths are relative to project root unless specified
+- Optional parameters: omit when not needed (don't pass null)
+- File operations respect project directory boundaries unless follow_symlinks=true
+- Binary files are detected and handled appropriately
+
+COMMON PARAMETERS:
+- follow_symlinks: Allow operations outside project via symlinks (default: true)
+- encoding: Text encoding (utf-8|ascii|latin1|utf-16|utf-16le|utf-16be, default: utf-8)
+- dry_run: Preview operation without executing (default: false)
+- show_diff: Display changes before applying (default: false)
+
+RETURN FORMATS:
+- Text tools: Plain text output with optional metadata
+- JSON tools: Structured data with consistent error handling
+- Operation tools: Success confirmation with optional diffs
+
+Use these tools for ALL file operations within the project to maintain project context and safety.",
+            name
+        )),
         meta: None,
     }
 }
+

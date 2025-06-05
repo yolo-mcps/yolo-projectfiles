@@ -17,31 +17,8 @@ const TOOL_NAME: &str = "delete";
 
 #[mcp_tool(
     name = "delete",
-    description = "Delete files and directories. Preferred over system 'rm' command.
-
-IMPORTANT: Requires explicit confirmation (confirm=true) OR force mode (force=true) for safety.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File or directory to delete (required)
-- recursive: Delete directories and contents (optional, default: false)
-- confirm: Require confirmation (optional, default: false)
-- force: Force deletion without confirmation (optional, default: false)
-- pattern: Treat path as glob pattern for bulk deletes (optional, default: false)
-
-Examples:
-- Delete single file: {\"path\": \"old.txt\", \"confirm\": true}
-- Delete empty directory: {\"path\": \"empty-dir\", \"confirm\": true}
-- Delete directory recursively: {\"path\": \"node_modules\", \"recursive\": true, \"force\": true}
-- Pattern delete: {\"path\": \"*.tmp\", \"pattern\": true, \"confirm\": true}
-- Force delete logs: {\"path\": \"logs/*.log\", \"pattern\": true, \"force\": true}
-- Clean build artifacts: {\"path\": \"target/\", \"recursive\": true, \"force\": true}
-
-Safety notes:
-- Cannot delete project root directory
-- Cannot delete files outside project directory
-- Non-empty directories require recursive=true
-- All deletions are permanent - no undo available"
+    description = "Delete files/directories with safety checks. Requires confirm or force. Supports patterns, recursive deletion.
+Examples: {\"path\": \"old.txt\", \"confirm\": true}, {\"path\": \"*.tmp\", \"pattern\": true, \"force\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct DeleteTool {

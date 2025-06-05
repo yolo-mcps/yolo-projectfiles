@@ -17,44 +17,8 @@ const TOOL_NAME: &str = "find";
 
 #[mcp_tool(
     name = "find",
-    description = "Find files and directories within the project. Preferred over system 'find' command.
-
-IMPORTANT: At least one filter criteria should be provided for meaningful results.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: Start directory (optional, default: \".\" - current directory)
-- name_pattern: File name pattern like \"*.rs\", \"test_*.js\", \"*.{yml,yaml}\" (optional)
-- path_pattern: Path pattern like \"*/test/*\", \"src/**\", \"**/node_modules/**\" (optional)
-- type_filter: \"file\", \"directory\", or \"any\" (optional, default: \"any\")
-- size_filter: \"+1M\" (>1MB), \"-100K\" (<100KB), \"50K\" (exactly 50KB) (optional)
-- date_filter: \"-7d\" (last 7 days), \"+30d\" (>30 days ago), \"-1h\" (last hour) (optional)
-- max_depth: Maximum directory depth to search (optional, unlimited by default)
-- follow_symlinks: Follow symlinks during directory traversal to search outside project (optional, default: false). When false, symlinked directories are not traversed.
-- follow_search_path: Follow symlinks for the start directory path (optional, default: true). When false, the start directory symlink is not resolved.
-- max_results: Maximum results to return (optional, default: 1000)
-- output_format: \"detailed\" (full info), \"names\" (paths only), \"compact\" (type+path) (optional, default: \"detailed\")
-
-Output formats:
-- \"detailed\": Full metadata with file sizes and summary
-- \"names\": Clean list of paths only (ideal for piping/processing)
-- \"compact\": Minimal info with file type indicators
-
-Examples:
-- Find test files: {\"name_pattern\": \"*.test.js\", \"path_pattern\": \"*/test/*\"}
-- List Rust source files: {\"name_pattern\": \"*.rs\", \"path_pattern\": \"src/**\", \"output_format\": \"names\"}
-- Recent changes: {\"date_filter\": \"-1d\", \"type_filter\": \"file\"}
-- Large files: {\"size_filter\": \"+10M\", \"output_format\": \"names\"}
-- Config files: {\"name_pattern\": \"*.{json,yaml,toml}\", \"max_results\": 20}
-- Deep search: {\"path\": \"src\", \"name_pattern\": \"*.rs\", \"max_depth\": 3}
-
-Common use cases:
-- Test files: Use path_pattern \"*/test/*\" or \"**/test/**\"
-- Source files: Use path_pattern \"src/**\" with appropriate extension
-- Exclude directories: Use path_pattern to focus on specific areas
-- Quick file lists: Use output_format \"names\" for clean output
-
-Returns matching files and directories sorted by path."
+    description = "Find files by name, path, size, date. Supports wildcards, depth limits, multiple output formats.
+Examples: {\"name_pattern\": \"*.test.js\"}, {\"size_filter\": \"+1M\", \"date_filter\": \"-7d\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct FindTool {

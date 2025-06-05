@@ -15,33 +15,8 @@ const TOOL_NAME: &str = "hash";
 
 #[mcp_tool(
     name = "hash",
-    description = "Calculate cryptographic hashes of files. Preferred over system hash commands.
-
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File path to hash (required)
-- algorithm: Hash algorithm - \"md5\", \"sha1\", \"sha256\", \"sha512\" (optional, default: \"sha256\")
-- follow_symlinks: Follow symlinks to hash files outside project directory (optional, default: true). When false, symlinks cannot be hashed.
-
-Output format:
-- Shows algorithm, file path, size, and hash value
-- Hash is displayed in lowercase hexadecimal format
-- File size included for verification purposes
-
-Examples:
-- Basic SHA256 hash: {\"path\": \"package.json\"}
-- MD5 checksum: {\"path\": \"README.md\", \"algorithm\": \"md5\"}
-- SHA512 for security: {\"path\": \"config.json\", \"algorithm\": \"sha512\"}
-- Without following symlinks: {\"path\": \"link.txt\", \"follow_symlinks\": false}
-- Verify downloaded file: {\"path\": \"download.tar.gz\", \"algorithm\": \"sha256\"}
-
-Common use cases:
-- Verify file integrity after downloads or transfers
-- Generate checksums for build artifacts
-- Compare files without reading content
-- Create reproducible build verification
-- Security auditing of configuration files"
+    description = "Calculate file hashes (MD5, SHA1, SHA256, SHA512). Verify checksums, compare files.
+Examples: {\"path\": \"package.json\"} or {\"path\": \"README.md\", \"algorithm\": \"md5\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct HashTool {

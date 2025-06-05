@@ -15,31 +15,8 @@ const TOOL_NAME: &str = "copy";
 
 #[mcp_tool(
     name = "copy", 
-    description = "Copy files and directories. Preferred over system 'cp' command.
-
-IMPORTANT: Recursive directory copying with structure preservation.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- source: Source path (required)
-- destination: Destination path (required)
-- overwrite: Replace existing files (optional, default: false)
-- preserve_metadata: Keep timestamps/permissions (optional, default: true)
-
-Features:
-- Copies files and directories recursively
-- Creates parent directories automatically
-- Preserves directory structure
-- Validates paths stay within project boundaries
-- Prevents copying directory into itself
-
-Examples:
-- Copy file: {\"source\": \"config.json\", \"destination\": \"config.backup.json\"}
-- Copy directory: {\"source\": \"src/\", \"destination\": \"src_backup/\"}
-- Overwrite existing: {\"source\": \"new.txt\", \"destination\": \"old.txt\", \"overwrite\": true}
-- Copy to subdirectory: {\"source\": \"file.txt\", \"destination\": \"backup/file.txt\"}
-
-Returns success message with file count and total size."
+    description = "Copy files/directories recursively. Auto-creates parents, preserves structure, prevents self-copy.
+Examples: {\"source\": \"config.json\", \"destination\": \"config.backup.json\"}, {\"source\": \"src/\", \"destination\": \"src_backup/\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct CopyTool {

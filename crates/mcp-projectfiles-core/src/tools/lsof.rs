@@ -14,45 +14,8 @@ const TOOL_NAME: &str = "lsof";
 
 #[mcp_tool(
     name = "lsof",
-    description = "List open files within the project directory. Preferred over system 'lsof' command.
-
-IMPORTANT: Only shows files within the project directory for security.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-This tool helps identify:
-- Which files are currently open by processes
-- Lock files and temporary files in use
-- Database files being accessed
-- Log files being written to
-- Which processes have files open in the project
-
-Parameters:
-- file_pattern: File pattern to match like \"*.log\", \"*.db\", \"*.lock\" (optional)
-- process_filter: Filter by process name or PID like \"python\", \"13361\" (optional)
-- include_all: Include all file types including sockets/pipes (optional, default: false)
-- output_format: Output format - \"detailed\" (default), \"compact\", \"json\" (optional)
-- sort_by: Sort results - \"path\" (default), \"process\", \"access\" (optional)
-
-Examples:
-- List all open files: {}
-- Find open log files: {\"file_pattern\": \"*.log\"}
-- Filter by process: {\"process_filter\": \"python\"}
-- Compact output: {\"output_format\": \"compact\"}
-- Sort by process: {\"sort_by\": \"process\"}
-- Find database locks: {\"file_pattern\": \"*.db\"}
-- Include everything: {\"include_all\": true}
-
-Returns JSON with:
-- total_found: Total open files found in project
-- files: Array of open file details including:
-  - file_path: Path to the open file
-  - process_info: Information about the process (PID, name if available)
-  - file_type: Type of file (file, directory, pipe, socket)
-  - access_info: Access mode information if available
-
-Platform support:
-- macOS/Linux: Uses lsof command with enhanced field parsing
-- Windows: Uses handle.exe if available, otherwise limited support"
+    description = "List open files in project. Find locks, active logs, database access.
+Examples: {} or {\"file_pattern\": \"*.log\"} or {\"process_filter\": \"python\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct LsofTool {

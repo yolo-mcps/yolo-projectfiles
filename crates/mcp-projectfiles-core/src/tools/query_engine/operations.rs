@@ -707,7 +707,7 @@ where
         _ => {
             // If numeric comparison fails, try string comparison for equality/inequality
             match (left, right) {
-                (Value::String(l), Value::String(r)) => {
+                (Value::String(_l), Value::String(_r)) => {
                     // For string comparison, we can only do equality/inequality reliably
                     // without knowing which operator we have
                     Err(QueryError::TypeError("String comparison only supports == and !=".to_string()))

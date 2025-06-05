@@ -19,54 +19,8 @@ fn default_follow_symlinks() -> bool {
 
 #[mcp_tool(
     name = "stat",
-    description = "Get detailed file or directory metadata. Preferred over system 'stat' or 'ls -la' commands.
-
-IMPORTANT: Supports both files and directories. Can follow symlinks to access files outside project directory.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File or directory path to analyze (required)
-- follow_symlinks: Follow symlinks to target (optional, default: true)
-
-Features:
-- File type detection (file, directory, symlink, other)
-- Size information with human-readable formatting
-- Timestamps (created, modified, accessed) in local timezone
-- Unix permissions in both octal and symbolic format
-- Ownership information (uid, gid)
-- Symlink handling with configurable behavior
-- Inode and device information
-
-Examples:
-- Basic file stat: {\"path\": \"README.md\"}
-- Directory metadata: {\"path\": \"src/\"}
-- Check symlink itself: {\"path\": \"link.txt\", \"follow_symlinks\": false}
-- Follow symlink to target: {\"path\": \"link.txt\", \"follow_symlinks\": true}
-
-Returns JSON with:
-- path: Original path provided
-- absolute_path: Resolved absolute path
-- exists: Always true (fails if file doesn't exist)
-- type: \"file\", \"directory\", \"symlink\", or \"other\"
-- size: Size in bytes
-- size_human: Human-readable size (e.g., \"1.5 KB\")
-- is_file/is_dir/is_symlink: Boolean type indicators
-- readonly: Whether file is read-only
-- modified: Last modification time (YYYY-MM-DD HH:MM:SS)
-- modified_timestamp: Unix timestamp
-- accessed: Last access time (if available)
-- created: Creation time (if available)
-- Unix-specific fields (when on Unix):
-  - mode: Octal permissions (e.g., \"755\")
-  - permissions: Symbolic permissions (e.g., \"rwxr-xr-x\")
-  - uid/gid: Owner and group IDs
-  - nlink: Number of hard links
-  - dev/ino: Device and inode numbers
-
-Platform notes:
-- Unix/Linux/macOS: Full permission and ownership information
-- Windows: Limited permission information (readonly flag only)
-- Creation time may not be available on all platforms"
+    description = "Get file/directory metadata: size, timestamps, permissions, ownership. Returns type, size_human, modified, mode.
+Examples: {\"path\": \"README.md\"}, {\"path\": \"link.txt\", \"follow_symlinks\": false}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct StatTool {

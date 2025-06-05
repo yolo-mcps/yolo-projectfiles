@@ -27,57 +27,11 @@ fn default_follow_symlinks() -> bool {
     true
 }
 
-#[mcp_tool(name = "write", description = "Write content to files within the project. Preferred over system text editors.
-
-IMPORTANT: Existing files must be read first using the read tool before overwriting.
-NOTE: Omit optional parameters when not needed, don't pass null.
-HINT: Works seamlessly with read (for viewing) and edit (for modifications).
-
-Features:
-- Create new files or overwrite existing ones
-- Append mode for adding content to existing files
-- Automatic parent directory creation
-- Backup creation before overwriting
-- Multiple encoding support
-- Symlink handling with configurable behavior
-- Dry run mode for previewing operations
-- Diff display when overwriting files
-- Size validation for safety
-
-Parameters:
-- path: File path (required)
-- content: Content to write (required)
-- append: Append instead of overwrite (optional, default: false)
-- backup: Create backup before overwriting (optional, default: false)
-- encoding: Text encoding - \"utf-8\", \"ascii\", \"latin1\", \"utf-16\", \"utf-16le\", \"utf-16be\" (optional, default: \"utf-8\")
-- follow_symlinks: Follow symlinks when writing (optional, default: true)
-- show_diff: Show diff when overwriting (optional, default: false)
-- dry_run: Preview operation without writing (optional, default: false)
-- force: Skip file size limits (optional, default: false)
-- include_metadata: Include operation metadata in response (optional, default: false)
+#[mcp_tool(name = "write", description = "Write or append content to files. Supports backup, diff preview, and safety checks.
 
 Examples:
-- Create new file: {\"path\": \"config.json\", \"content\": \"{...}\"}
-- Append to log: {\"path\": \"app.log\", \"content\": \"New entry\\n\", \"append\": true}
-- Safe overwrite: {\"path\": \"settings.ini\", \"content\": \"...\", \"backup\": true}
-- Preview changes: {\"path\": \"data.xml\", \"content\": \"...\", \"dry_run\": true}
-- Show differences: {\"path\": \"README.md\", \"content\": \"...\", \"show_diff\": true}
-- Different encoding: {\"path\": \"legacy.txt\", \"content\": \"...\", \"encoding\": \"latin1\"}
-
-When to use show_diff:
-- Reviewing changes to configuration files
-- Updating documentation or code files
-- When you want to see what's being replaced
-
-When to use dry_run:
-- Testing write operations before executing
-- Verifying file paths and content
-- When user asks to 'carefully' write files
-
-Integration with read/edit:
-- Use 'read' tool first to view existing content
-- Use 'edit' tool for precise string replacements
-- Use 'write' tool for complete file creation/replacement")]
+- {\"path\": \"config.json\", \"content\": \"{...}\"}
+- {\"path\": \"log.txt\", \"content\": \"entry\", \"append\": true}")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct WriteTool {
     /// Path to the file to write (relative to project root)

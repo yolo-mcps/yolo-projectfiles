@@ -18,29 +18,9 @@ fn default_follow_symlinks() -> bool {
 
 #[mcp_tool(
     name = "exists",
-    description = "Check if files/directories exist. Preferred over system file tests.
+    description = "Check file/directory existence. Returns JSON with exists, type, and optional metadata.
 
-Returns existence status and type (file/directory/none) as JSON response.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File or directory path to check (required)
-- follow_symlinks: Follow symlinks to target (optional, default: true)
-- include_metadata: Include size, permissions, timestamps (optional, default: false)
-
-Examples:
-- Check file: {\"path\": \"README.md\"}
-- Check directory: {\"path\": \"src/\"}
-- Check without following symlinks: {\"path\": \"link.txt\", \"follow_symlinks\": false}
-- Check with metadata: {\"path\": \"package.json\", \"include_metadata\": true}
-- Check nested path: {\"path\": \"src/utils/helper.js\"}
-
-Returns JSON with:
-- exists: boolean indicating if path exists
-- type: \"file\", \"directory\", \"other\", or \"none\"
-- path: original path provided
-- absolute_path: resolved absolute path
-- metadata: (if requested) size, permissions, modified time"
+Example: {\"path\": \"src/main.rs\", \"include_metadata\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ExistsTool {

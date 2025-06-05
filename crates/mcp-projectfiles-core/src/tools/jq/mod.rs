@@ -26,61 +26,8 @@ pub enum JsonQueryError {
     QueryEngine(#[from] QueryError),
 }
 
-#[mcp_tool(name = "jq", description = "Query and manipulate JSON files using jq-style syntax. Preferred tool for JSON manipulation in projects.
-
-Core Features:
-
-Data Access & Filtering:
-- Basic access: \".field\", \".nested.field\", \".array[0]\", \".users[*].name\"
-- Array iteration: \".users[]\", \"map(.name)\", \"select(.age > 18)\"
-- Filtering: \"select(.active)\", \"map(select(.score > 80))\"
-- Recursive search: \"..email\" (find all email fields), \"..\" (all values)
-- Wildcards: \".users.*\", \".data.items[*].id\"
-
-Array Operations:
-- Basic: \"add\" (sum/concat), \"min\", \"max\", \"unique\", \"reverse\", \"sort\", \"sort_by(.field)\"
-- Advanced: \"flatten\", \"group_by(.key)\", \"indices(value)\", \"[2:5]\" (slicing)
-
-Object Operations:
-- Tools: \"keys\", \"values\", \"has(\\\"field\\\")\", \"del(.field)\", \"to_entries\", \"from_entries\"
-- Manipulation: \"with_entries(.value *= 2)\", \"paths\", \"leaf_paths\"
-
-String Processing:
-- Functions: \"split(\\\",\\\")\", \"join(\\\" \\\")\", \"trim\", \"ltrimstr(\\\"prefix\\\")\", \"rtrimstr(\\\"suffix\\\")\"
-- Case: \"ascii_upcase\", \"ascii_downcase\"
-- Testing: \"contains(\\\"@\\\")\", \"startswith(\\\"http\\\")\", \"test(\\\"^[0-9]+$\\\")\", \"match(\\\"(\\\\d+)\\\")\"
-- Conversion: \"tostring\", \"tonumber\"
-
-Math & Logic:
-- Arithmetic: \".price * 1.1\", \".x + .y\", \".a % .b\"
-- Math: \"floor\", \"ceil\", \"round\", \"abs\"
-- Conditionals: \"if .age > 18 then \\\"adult\\\" else \\\"minor\\\" end\"
-- Boolean: \".age >= 18 and .active\", \".premium or .vip\", \"not .disabled\"
-- Null handling: \".timeout // 30\", \".user.profile?\", \"try .risky catch \\\"failed\\\"\"
-
-Common Examples:
-- Extract data: \".users | map(.email)\"
-- Filter: \".users | map(select(.active))\"
-- Calculate: \".orders | map(.items | map(.price * .quantity) | add) | add\"
-- Group: \"group_by(.category) | map({category: .[0].category, count: length})\"
-- Transform: \"to_entries | map({name: .key, value: .value | ascii_upcase}) | from_entries\"
-
-Write Operations:
-- Simple: \".field = value\", \".nested.field = \\\"text\\\"\"
-- Array: \".items[0] = \\\"new\\\"\"
-- Bulk: \"map(.active = true)\"
-
-Output Formats:
-- \"json\": Pretty-printed (default)
-- \"compact\": Minified JSON
-- \"raw\": Plain values for simple types
-
-Safety:
-- Restricted to project directory only
-- Supports symlink handling with follow_symlinks parameter (default: true)
-- When follow_symlinks is false, symlinked JSON files cannot be accessed
-- Optional backups for write operations (backup: true)
-- Atomic writes prevent corruption")]
+#[mcp_tool(name = "jq", description = "Query and manipulate JSON files with jq syntax. Full jq features, read/write operations.
+Examples: \".users | map(.email)\" or \".active = true\" or \"group_by(.category)\"")]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JsonQueryTool {
     /// Path to the JSON file (relative to project root)

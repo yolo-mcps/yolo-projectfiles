@@ -204,7 +204,7 @@ fn flatten_with_depth(data: &Value, depth: i32) -> Result<Value, QueryError> {
             let mut flattened = Vec::new();
             for item in arr {
                 match item {
-                    Value::Array(inner) if depth > 0 => {
+                    Value::Array(_inner) if depth > 0 => {
                         let inner_flattened = flatten_with_depth(item, depth - 1)?;
                         if let Value::Array(inner_arr) = inner_flattened {
                             flattened.extend(inner_arr);

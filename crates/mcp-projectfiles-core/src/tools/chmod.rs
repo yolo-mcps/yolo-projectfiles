@@ -15,36 +15,8 @@ const TOOL_NAME: &str = "chmod";
 
 #[mcp_tool(
     name = "chmod", 
-    description = "Change file/directory permissions. Preferred over system 'chmod' command.
-
-IMPORTANT: Unix-like systems only. Requires octal permission format.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: File or directory path (required)
-- mode: Octal permissions like \"755\", \"644\", \"600\" (required)
-- recursive: Apply to directory contents (optional, default: false)
-- pattern: Treat path as glob pattern for bulk operations (optional, default: false)
-
-Permission meanings:
-- 7 (rwx): Read, write, execute
-- 6 (rw-): Read, write
-- 5 (r-x): Read, execute
-- 4 (r--): Read only
-- 0 (---): No permissions
-
-Common modes:
-- \"755\": rwxr-xr-x (executable/directory)
-- \"644\": rw-r--r-- (regular file)
-- \"600\": rw------- (private file)
-- \"700\": rwx------ (private directory)
-
-Examples:
-- Make executable: {\"path\": \"script.sh\", \"mode\": \"755\"}
-- Secure private file: {\"path\": \"secrets.env\", \"mode\": \"600\"}
-- Fix directory permissions: {\"path\": \"src\", \"mode\": \"755\", \"recursive\": true}
-- Bulk chmod .sh files: {\"path\": \"*.sh\", \"mode\": \"755\", \"pattern\": true}
-- Private config files: {\"path\": \"config/*.json\", \"mode\": \"600\", \"pattern\": true}"
+    description = "Change file permissions (Unix). Octal modes, recursive, patterns.
+Examples: {\"path\": \"script.sh\", \"mode\": \"755\"} or {\"path\": \"*.sh\", \"mode\": \"755\", \"pattern\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ChmodTool {

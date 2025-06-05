@@ -16,52 +16,8 @@ const TOOL_NAME: &str = "tree";
 
 #[mcp_tool(
     name = "tree",
-    description = "Display directory structure as a tree visualization. Preferred over system 'tree' command.
-
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Features:
-- Hierarchical tree display with visual branch indicators
-- File size display for regular files
-- Directory-first sorting (directories appear before files)
-- Pattern filtering with glob support
-- Hidden file filtering (.dotfiles)
-- Depth limiting for large directory structures
-- Directory-only mode for structure overview
-- Symlink support with configurable behavior
-
-Parameters:
-- path: Directory path (optional, default: \".\" - current directory)
-- max_depth: Maximum depth to traverse (optional, unlimited by default)
-- show_hidden: Include hidden files starting with '.' (optional, default: false)
-- dirs_only: Show only directories, no files (optional, default: false)
-- pattern_filter: File name pattern like \"*.rs\", \"*.{js,ts}\" (optional)
-- exclude_pattern: File pattern to exclude like \"*.log\", \"test_*\" (optional)
-- follow_symlinks: Follow symlinks for the tree root (optional, default: true)
-- output_format: Output format - \"tree\" or \"json\" (optional, default: \"tree\")
-- max_files: Maximum number of files to show (optional, default: 1000)
-
-Output formats:
-- \"tree\": Visual tree structure with branch indicators and file sizes
-- \"json\": Structured JSON with full tree hierarchy and metadata
-
-Examples:
-- Basic tree: {\"path\": \".\"}
-- Limited depth: {\"path\": \"src\", \"max_depth\": 2}
-- Show hidden files: {\"path\": \".\", \"show_hidden\": true}
-- Directories only: {\"path\": \".\", \"dirs_only\": true}
-- Filter by pattern: {\"path\": \"src\", \"pattern_filter\": \"*.rs\"}
-- Multiple patterns: {\"path\": \".\", \"pattern_filter\": \"*.{js,ts,jsx,tsx}\"}
-- Exclude files: {\"path\": \".\", \"exclude_pattern\": \"*.log\"}
-- Without symlinks: {\"path\": \".\", \"follow_symlinks\": false}
-- JSON output: {\"path\": \".\", \"output_format\": \"json\", \"max_depth\": 2}
-- Large directories: {\"path\": \"node_modules\", \"max_files\": 100, \"max_depth\": 3}
-
-Common use cases:
-- Project structure overview: Use dirs_only for clean structural view
-- Find specific file types: Use pattern_filter with appropriate extensions
-- Check directory sizes: Default view shows file sizes and totals
-- Explore dependencies: {\"path\": \"node_modules\", \"max_depth\": 2}"
+    description = "Display directory tree with sizes, patterns, depth limits. Supports tree/json output.
+Examples: {\"path\": \"src\", \"max_depth\": 2}, {\"path\": \".\", \"dirs_only\": true, \"pattern_filter\": \"*.rs\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TreeTool {

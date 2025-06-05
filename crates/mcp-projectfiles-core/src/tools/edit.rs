@@ -254,47 +254,12 @@ fn default_expected() -> u32 {
 /// ```
 #[mcp_tool(
     name = "edit",
-    description = "Replace exact strings in files. Preferred over system text editors.
+    description = "Replace exact strings in files. Supports single/multi edits, preview, and diff display.
 
-CRITICAL: File MUST be read first. String must match EXACTLY (whitespace, indentation, line endings).
-HINT: When reading a file for editing, use linenumbers:false to get raw content without line prefixes.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Two modes:
-1) Single edit: Use old/new/expected
-2) Multi-edit: Use edits array for sequential replacements
-
-Parameters:
-- path: File to edit (required)
-- old: Exact string to find (optional, required for single mode)
-- new: Replacement string (optional, required for single mode)  
-- expected: Expected match count (optional, default: 1)
-- replace_all: Replace all occurrences in single mode (optional, default: false)
-- edits: Array of {old, new, expected, replace_all} (optional, required for multi mode)
-- show_diff: Show changes made (optional, default: false)
-- dry_run: Preview changes without modifying file (optional, default: false)
-
-When to use show_diff:
-- Set to true when you want to review changes before they're applied
-- Useful for complex edits where you want visual confirmation
-- Helpful when making sensitive changes to configuration files
-- Recommended for first-time edits to unfamiliar code
-- Not needed for simple, straightforward replacements
-- Large diffs are truncated to first 100 lines for readability
-
-When to use dry_run:
-- Set to true when user asks to 'carefully' make changes
-- Use when editing critical configuration files
-- Recommended for complex multi-edit operations
-- Allows preview of all changes before committing
-- Returns diff output without modifying the file
-- After showing the dry run preview, ask the user if they would like to proceed with the actual changes
-
-Error Handling:
-- When multiple occurrences are found, the error shows where they are located
-- When string is not found, hints about possible issues are provided
-- Use 'replace_all: true' to replace all occurrences when needed
-"
+Examples:
+- {\"path\": \"config.json\", \"old\": \"foo\", \"new\": \"bar\"}
+- {\"path\": \"src/main.rs\", \"edits\": [{\"old\": \"old1\", \"new\": \"new1\"}, {\"old\": \"old2\", \"new\": \"new2\"}]}
+- {\"path\": \"README.md\", \"old\": \"typo\", \"new\": \"correct\", \"dry_run\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct EditTool {

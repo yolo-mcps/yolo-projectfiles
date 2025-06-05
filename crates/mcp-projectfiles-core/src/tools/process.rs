@@ -10,38 +10,8 @@ const TOOL_NAME: &str = "process";
 
 #[mcp_tool(
     name = "process",
-    description = "Check running processes and port usage. Preferred over system 'ps', 'pgrep', or 'netstat' commands.
-
-IMPORTANT: Returns processes and/or port information based on provided parameters. Without parameters, lists all processes (limited by max_results).
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- name_pattern: Process name pattern to search (optional, supports wildcards like \"*node*\", \"postgres\")
-- check_ports: Array of port numbers to check if in use (optional)
-- max_results: Maximum process results to return (optional, default: 50)
-- include_full_command: Include full command line in results (optional, default: false)
-- sort_by: Sort results by \"name\", \"pid\", \"cpu\", or \"memory\" (optional, default: \"name\")
-
-Examples:
-- List all processes: {}
-- Find Node.js processes: {\"name_pattern\": \"*node*\"}
-- Check if port 3000 is in use: {\"check_ports\": [3000]}
-- Find Python processes with full commands: {\"name_pattern\": \"python\", \"include_full_command\": true}
-- Check multiple ports: {\"check_ports\": [80, 443, 3000, 8080]}
-- Find and sort by CPU usage: {\"name_pattern\": \"chrome\", \"sort_by\": \"cpu\"}
-- Combined search: {\"name_pattern\": \"webpack\", \"check_ports\": [8080], \"max_results\": 10}
-
-Returns JSON with:
-- processes: Array of matching processes with PID, name, status, CPU%, memory
-- ports: Array of port information with protocol, PID, process name
-- total_processes_found: Number of processes found
-- total_ports_checked: Number of ports checked
-- query: Original query parameters for reference
-
-Integration with other tools:
-- Use with 'kill' tool to terminate processes by PID
-- Use with 'lsof' tool to see which files processes have open
-- Check ports before starting services to avoid conflicts"
+    description = "Find processes and check port usage. Wildcards, sorting, full commands.
+Examples: {} or {\"name_pattern\": \"*node*\"} or {\"check_ports\": [3000, 8080]}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ProcessTool {

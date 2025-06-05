@@ -50,64 +50,14 @@ fn default_case() -> String {
 }
 
 
-#[mcp_tool(name = "read", description = "Read text files within the project. Preferred over system 'cat', 'head', 'tail' commands.
+#[mcp_tool(name = "read", description = "Read text files with line numbers, pattern filtering, ranges, and tail mode.
 
-IMPORTANT: Files must exist within the project directory unless accessed via symlinks with follow_symlinks=true.
-NOTE: Omit optional parameters when not needed, don't pass null.
-HINT: Use linenumbers:false when reading files you plan to edit.
-
-Features:
-- Line numbers by default (format: line_number<tab>content)
-- Partial reading with offset/limit or line ranges
-- Pattern filtering with regex (with optional inversion)
-- Context lines around pattern matches
-- Tail mode for reading from end
-- Binary file detection with BOM awareness
-- Multiple encoding support
-- File metadata reporting
-- Preview mode for large files
-- Symlink support with configurable behavior
-
-Parameters:
-- path: File path (required)
-- offset: Start line (1-indexed, default: 0 for beginning)
-- limit: Max lines to read (0 for all, default: 0)
-- line_range: Line range like \"10-20\" (optional, overrides offset/limit)
-- linenumbers: Show line numbers (optional, default: true)
-- tail: Read from end (optional, default: false)
-- pattern: Regex to filter lines (optional)
-- invert_match: Show lines NOT matching pattern (optional, default: false)
-- context_before: Lines of context before match (optional, default: 0)
-- context_after: Lines of context after match (optional, default: 0)
-- case: Pattern matching case - \"sensitive\" or \"insensitive\" (optional, default: \"sensitive\")
-- encoding: Text encoding - \"utf-8\", \"ascii\", \"latin1\", \"utf-16\", \"utf-16le\", \"utf-16be\" (optional, default: \"utf-8\")
-- follow_symlinks: Follow symlinks to read files outside project directory (optional, default: true)
-- binary_check: Perform binary file detection (optional, default: true)
-- preview_only: Show file info without reading content (optional, default: false)
-- include_metadata: Include file size, modified time, etc. (optional, default: false)
+Key features: offset/limit, line_range (\"10-20\"), pattern matching with context, tail mode, encoding detection, preview mode.
 
 Examples:
-- Basic read: {\"path\": \"README.md\"}
-- Read specific lines: {\"path\": \"src/main.rs\", \"line_range\": \"10-20\"}
-- Read with offset/limit: {\"path\": \"large.log\", \"offset\": 100, \"limit\": 50}
-- Tail last 20 lines: {\"path\": \"app.log\", \"tail\": true, \"limit\": 20}
-- Find TODO comments: {\"path\": \"src/lib.rs\", \"pattern\": \"TODO\"}
-- Find non-comment lines: {\"path\": \"config.toml\", \"pattern\": \"^\\\\s*#\", \"invert_match\": true}
-- Search with context: {\"path\": \"error.log\", \"pattern\": \"ERROR\", \"context_before\": 2, \"context_after\": 3}
-- Preview large file: {\"path\": \"database.sql\", \"preview_only\": true}
-- Read without line numbers: {\"path\": \"template.txt\", \"linenumbers\": false}
-- Case-insensitive search: {\"path\": \"notes.txt\", \"pattern\": \"important\", \"case\": \"insensitive\"}
-
-Returns:
-- content: The file content with optional line numbers
-- metadata: File information (if include_metadata=true or preview_only=true)
-  - size: File size in bytes
-  - size_human: Human-readable size
-  - modified: Last modification time
-  - lines: Total line count
-  - encoding: Detected encoding
-  - has_bom: Whether file has BOM
-  - is_binary: Whether file appears to be binary")]
+- {\"path\": \"src/main.rs\", \"line_range\": \"10-20\"}
+- {\"path\": \"app.log\", \"tail\": true, \"limit\": 20}
+- {\"path\": \"lib.rs\", \"pattern\": \"TODO\", \"context_after\": 2}")]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct ReadTool {
     /// Path to the file to read (relative to project root)

@@ -14,28 +14,8 @@ const TOOL_NAME: &str = "mkdir";
 
 #[mcp_tool(
     name = "mkdir", 
-    description = "Creates directories within the project directory. Preferred over system 'mkdir' command.
-
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- path: Directory path to create (required)
-- parents: Create parent directories if needed (optional, default: true)
-- mode: Unix permissions in octal, e.g., \"755\" (optional, platform-specific)
-
-Features:
-- Creates parent directories automatically when parents=true
-- Handles existing directories gracefully (returns success message)
-- Validates all paths stay within project boundaries
-- Supports Unix-style permissions on compatible systems
-
-Examples:
-- Create single directory: {\"path\": \"src/utils\"}
-- Create without parents: {\"path\": \"new-dir\", \"parents\": false}
-- Create with permissions: {\"path\": \"scripts\", \"mode\": \"755\"}
-- Create nested structure: {\"path\": \"src/components/ui/buttons\"}
-
-Returns success message with created path or info if directory exists."
+    description = "Create directories with auto parent creation. Supports Unix permissions.
+Examples: {\"path\": \"src/utils\"}, {\"path\": \"scripts\", \"mode\": \"755\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct MkdirTool {

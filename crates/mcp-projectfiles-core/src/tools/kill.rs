@@ -16,48 +16,8 @@ const TOOL_NAME: &str = "kill";
 
 #[mcp_tool(
     name = "kill",
-    description = "Terminate processes running within the project directory. Preferred over system 'kill' command.
-
-IMPORTANT: Only processes with working directory within project can be killed for safety.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- pid: Process ID to kill (optional)
-- name_pattern: Process name pattern like \"*node*\", \"webpack\" (optional)
-- signal: Signal to send - \"TERM\", \"KILL\", \"INT\", \"QUIT\", \"USR1\", \"USR2\" (optional, default: \"TERM\")
-- dry_run: Preview processes to kill without terminating (optional, default: false)
-- max_processes: Maximum processes to kill with pattern (optional, default: 10)
-- preview_only: Show matching processes without dry run details (optional, default: false)
-- force_confirmation: Require explicit confirmation for dangerous operations (optional, default: false)
-
-Safety features:
-- Only kills processes within project directory (automatic safety)
-- Limits bulk operations to prevent accidents
-- Shows detailed process information during execution
-- Use dry_run=true when user asks to proceed 'carefully' or wants to preview
-
-When to use dry_run:
-- Set to true when user asks to 'carefully' terminate processes
-- Use when you want to preview which processes would be affected
-- Recommended for pattern-based killing to verify matches
-- After showing dry run preview, ask user if they would like to proceed
-
-Examples:
-- Kill specific process: {\"pid\": 12345}
-- Preview pattern matches: {\"name_pattern\": \"*webpack*\", \"preview_only\": true}
-- Dry run with details: {\"name_pattern\": \"*webpack*\", \"dry_run\": true}
-- Kill hung process with KILL signal: {\"pid\": 12345, \"signal\": \"KILL\"}
-- Pattern kill with limit: {\"name_pattern\": \"node\", \"max_processes\": 5}
-- Safe bulk operation: {\"name_pattern\": \"*python*\", \"force_confirmation\": true}
-- Interrupt process: {\"pid\": 12345, \"signal\": \"INT\"}
-
-Returns JSON with:
-- processes_targeted: Number of processes found
-- processes_killed: Number successfully terminated (0 for dry run)
-- processes_failed: Number that failed to terminate
-- signal_used: Signal that was/would be sent
-- results: Array with details for each process
-- dry_run: Whether this was a dry run"
+    description = "Terminate processes in project directory. Signals, patterns, dry-run preview.
+Examples: {\"pid\": 12345} or {\"name_pattern\": \"*webpack*\", \"dry_run\": true}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct KillTool {

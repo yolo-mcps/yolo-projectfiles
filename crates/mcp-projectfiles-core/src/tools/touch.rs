@@ -17,53 +17,8 @@ const TOOL_NAME: &str = "touch";
 
 #[mcp_tool(
     name = "touch", 
-    description = "Create files or update timestamps. Preferred over system 'touch' command.
-
-IMPORTANT: Files must be within the project directory. Parent directories are created automatically.
-NOTE: Omit optional parameters when not needed, don't pass null.
-HINT: Use create:false to update timestamps only on existing files.
-
-Features:
-- Create empty files or update existing file timestamps
-- Automatic parent directory creation when creating new files
-- Selective timestamp updates (access time, modification time, or both)
-- Copy timestamps from reference files
-- Specify exact timestamps in ISO 8601 format
-- Supports multiple encoding formats for creation
-- Dry run mode to preview operations
-- Batch operations on multiple files
-
-Parameters:
-- path: File path (required)
-- create: Create file if missing (optional, default: true)
-- update_atime: Update access time (optional, default: true)
-- update_mtime: Update modification time (optional, default: true)
-- atime: Specific access time ISO 8601 (optional, e.g., \"2023-12-25T10:30:00Z\")
-- mtime: Specific modification time ISO 8601 (optional)
-- reference: Copy timestamps from this file (optional)
-- encoding: File encoding for new files (optional, default: \"utf-8\")
-- content: Initial content for new files (optional, default: empty)
-- dry_run: Preview operation without making changes (optional, default: false)
-
-Examples:
-- Create new file: {\"path\": \"new.txt\"}
-- Update existing only: {\"path\": \"existing.txt\", \"create\": false}
-- Specific timestamp: {\"path\": \"dated.txt\", \"mtime\": \"2023-01-01T00:00:00Z\"}
-- Copy timestamps: {\"path\": \"copy.txt\", \"reference\": \"original.txt\"}
-- Update mtime only: {\"path\": \"file.txt\", \"update_atime\": false}
-- Create with content: {\"path\": \"hello.txt\", \"content\": \"Hello World\"}
-- Preview operation: {\"path\": \"test.txt\", \"dry_run\": true}
-- Create in subdirectory: {\"path\": \"src/utils/helper.js\"}
-
-Timestamp format:
-- ISO 8601: \"2023-12-25T10:30:00Z\" (UTC)
-- With timezone: \"2023-12-25T10:30:00-05:00\"
-- Date only sets midnight: \"2023-12-25\" → \"2023-12-25T00:00:00Z\"
-
-Integration with other tools:
-- Use 'stat' to verify timestamp changes
-- Use 'read' to check file was created correctly
-- Use 'exists' to check before using create:false"
+    description = "Create files or update timestamps. ISO 8601 dates, reference files, content.
+Examples: {\"path\": \"new.txt\"} or {\"path\": \"dated.txt\", \"mtime\": \"2023-01-01T00:00:00Z\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct TouchTool {

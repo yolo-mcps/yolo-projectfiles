@@ -16,32 +16,8 @@ const TOOL_NAME: &str = "move";
 
 #[mcp_tool(
     name = "move", 
-    description = "Move or rename files and directories. Preferred over system 'mv' command.
-
-IMPORTANT: Paths are restricted to project directory for safety.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- source: Source path to move (required)
-- destination: Destination path (required)
-- overwrite: Replace existing files (optional, default: false)
-- preserve_metadata: Keep timestamps/permissions (optional, default: true)
-- dry_run: Preview move without executing (optional, default: false)
-
-Examples:
-- Rename file: {\"source\": \"old.txt\", \"destination\": \"new.txt\"}
-- Move to directory: {\"source\": \"file.txt\", \"destination\": \"archive/file.txt\"}
-- Move directory: {\"source\": \"src/old\", \"destination\": \"src/new\"}
-- Force overwrite: {\"source\": \"temp.txt\", \"destination\": \"final.txt\", \"overwrite\": true}
-- Preview move: {\"source\": \"important.db\", \"destination\": \"backup/important.db\", \"dry_run\": true}
-- Quick rename: {\"source\": \"draft.md\", \"destination\": \"README.md\", \"preserve_metadata\": false}
-
-Returns success message with:
-- File/directory type moved
-- Source and destination paths
-- Size information (for files)
-- Metadata preservation status
-- Dry run indication if applicable"
+    description = "Move or rename files/directories. Supports overwrite, metadata preservation, dry run preview.
+Examples: {\"source\": \"old.txt\", \"destination\": \"new.txt\"}, {\"source\": \"file.txt\", \"destination\": \"archive/file.txt\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct MoveTool {

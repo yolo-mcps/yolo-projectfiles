@@ -1,5 +1,18 @@
 # TODO
 
+## Recent Changes
+
+### Tool Documentation Consolidation (Completed)
+- ✅ Updated server initialization instructions in protocol.rs and handler.rs to include global tool behavior
+- ✅ Reduced individual tool descriptions from 80-500 words to 15-40 words each
+- ✅ Moved common parameters and behavior documentation to server-level instructions
+- ✅ Updated all 25 tools with concise descriptions and 1-2 examples
+- ✅ Verified project builds successfully after all changes
+- ✅ Updated remaining verbose tools to concise descriptions (file, wc, hash, process, kill, lsof, chmod, touch, jq, yq, tomlq)
+
+### Known Issues
+- ⚠️ 5 failing jq tests related to select() and comparison operations need to be fixed
+
 ## Query Engine Fixes to Test After Restart
 
 After recompiling and restarting the MCP server, test these fixes:

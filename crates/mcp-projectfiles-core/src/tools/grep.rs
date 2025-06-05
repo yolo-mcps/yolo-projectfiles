@@ -17,37 +17,11 @@ const TOOL_NAME: &str = "grep";
 
 #[mcp_tool(
     name = "grep",
-    description = "Search for patterns in text files. Preferred over system 'grep' or 'rg'.
-
-IMPORTANT: At least one of 'pattern' or 'patterns' must be provided.
-NOTE: Omit optional parameters when not needed, don't pass null.
-
-Parameters:
-- pattern: Regex pattern to search (optional)
-- patterns: Array of patterns for OR search (optional, overrides pattern)
-- path: File or directory to search (optional, default: \".\" - current directory)
-- include: File pattern to include, e.g., \"*.rs\", \"*.{ts,tsx}\" (optional)
-- exclude: File pattern to exclude, e.g., \"*.log\", \"test_*\" (optional)
-- case: Case sensitivity - \"sensitive\" or \"insensitive\" (optional, default: \"sensitive\")
-- linenumbers: Show line numbers (optional, default: true)
-- context_before: Lines of context before match (optional, default: 0)
-- context_after: Lines of context after match (optional, default: 0)
-- max_results: Maximum results to return, 0 = unlimited (optional, default: 100)
-- follow_search_path: Follow symlinks in the search directory path to search outside project (optional, default: true). When false, symlinked directories cannot be searched.
-- invert_match: Show lines NOT matching pattern (optional, default: false)
-
-Binary files are automatically skipped.
+    description = "Search patterns in text files with regex, context lines, and filtering.
 
 Examples:
-- Search in current directory: {\"pattern\": \"TODO\"}
-- Search specific file: {\"pattern\": \"TODO\", \"path\": \"src/main.rs\"}
-- Search directory: {\"pattern\": \"TODO\", \"path\": \"src/\"}
-- Search only .rs files: {\"pattern\": \"TODO\", \"include\": \"*.rs\"}
-- Case insensitive: {\"pattern\": \"todo\", \"case\": \"insensitive\"}
-- Inverse match (NOT containing): {\"pattern\": \"TODO\", \"invert_match\": true}
-- Multiple patterns (OR): {\"patterns\": [\"TODO\", \"FIXME\", \"BUG\"]}
-
-Returns matching lines with file paths and context."
+- {\"pattern\": \"TODO\", \"path\": \"src/\"}
+- {\"patterns\": [\"TODO\", \"FIXME\"], \"include\": \"*.rs\", \"case\": \"insensitive\"}"
 )]
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone)]
 pub struct GrepTool {
