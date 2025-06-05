@@ -715,13 +715,19 @@ mod tests {
             path: file_name.to_string(),
             offset: 0,
             limit: 0,
+            line_range: None,
             binary_check: true,
             tail: false,
             pattern: None,
+            invert_match: false,
+            context_before: 0,
+            context_after: 0,
             case: "sensitive".to_string(),
             encoding: "utf-8".to_string(),
             linenumbers: true,
             follow_symlinks: true,
+            preview_only: false,
+            include_metadata: false,
         };
         let _ = read_tool.call_with_context(context).await.unwrap();
     }

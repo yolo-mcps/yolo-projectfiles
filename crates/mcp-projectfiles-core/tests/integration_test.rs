@@ -1,4 +1,4 @@
-use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool, FindTool, TreeTool, StatTool, ExistsTool, LsofTool, ProcessTool};
+use mcp_projectfiles_core::tools::{ListTool, GrepTool, KillTool, FindTool, TreeTool, StatTool, ExistsTool, LsofTool, ProcessTool, ReadTool};
 use mcp_projectfiles_core::context::ToolContext;
 use mcp_projectfiles_core::StatefulTool;
 use mcp_projectfiles_core::protocol::CallToolResultContentItem;
@@ -1984,5 +1984,247 @@ async fn test_process_lsof_integration() {
             }
         }
     }
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_integration() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test file with multiple lines
+    let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10";
+    fs::write(temp_path.join("test.txt"), content).unwrap();
+    
+    // Test basic read
+    let tool = ReadTool {
+        path: "test.txt".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: None,
+        binary_check: true,
+        tail: false,
+        pattern: None,
+        invert_match: false,
+        context_before: 0,
+        context_after: 0,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: false,
+        include_metadata: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    assert!(output.contains("     1\tLine 1"));
+    assert!(output.contains("    10\tLine 10"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_line_range() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test file
+    let content = (1..=20).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+    fs::write(temp_path.join("lines.txt"), content).unwrap();
+    
+    // Test line range
+    let tool = ReadTool {
+        path: "lines.txt".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: Some("5-10".to_string()),
+        binary_check: true,
+        tail: false,
+        pattern: None,
+        invert_match: false,
+        context_before: 0,
+        context_after: 0,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: false,
+        include_metadata: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    assert!(output.contains("     5\tLine 5"));
+    assert!(output.contains("    10\tLine 10"));
+    assert!(!output.contains("Line 4"));
+    assert!(!output.contains("Line 11"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_pattern_with_context() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create log file
+    let content = "INFO: Starting\nDEBUG: Process initialized\nERROR: Failed to connect\nINFO: Retrying\nDEBUG: Connection established\nWARNING: High latency\nERROR: Timeout occurred\nINFO: Completed";
+    fs::write(temp_path.join("app.log"), content).unwrap();
+    
+    // Test pattern with context
+    let tool = ReadTool {
+        path: "app.log".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: None,
+        binary_check: true,
+        tail: false,
+        pattern: Some("ERROR".to_string()),
+        invert_match: false,
+        context_before: 1,
+        context_after: 1,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: false,
+        include_metadata: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Should include ERROR lines and their context
+    assert!(output.contains("ERROR: Failed to connect"));
+    assert!(output.contains("ERROR: Timeout occurred"));
+    assert!(output.contains("DEBUG: Process initialized")); // context before first ERROR
+    assert!(output.contains("INFO: Retrying")); // context after first ERROR
+    assert!(output.contains("WARNING: High latency")); // context before second ERROR
+    assert!(output.contains("INFO: Completed")); // context after second ERROR
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_preview_mode() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create a large file
+    let content = (1..=1000).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+    fs::write(temp_path.join("large.txt"), content).unwrap();
+    
+    // Test preview mode
+    let tool = ReadTool {
+        path: "large.txt".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: None,
+        binary_check: true,
+        tail: false,
+        pattern: None,
+        invert_match: false,
+        context_before: 0,
+        context_after: 0,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: true,
+        include_metadata: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Parse JSON metadata
+    let metadata: serde_json::Value = serde_json::from_str(&output).unwrap();
+    
+    assert!(metadata["size"].as_u64().unwrap() > 0);
+    assert!(metadata["lines"].as_u64().unwrap() == 1000);
+    assert!(metadata["is_binary"].as_bool().unwrap() == false);
+    assert!(metadata["has_bom"].as_bool().unwrap() == false);
+    assert!(metadata["encoding"].as_str().unwrap() == "utf-8");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_invert_match() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create config file
+    let content = "# Comment line 1\nactive = true\n# Comment line 2\nport = 8080\n# Comment line 3\nhost = localhost";
+    fs::write(temp_path.join("config.txt"), content).unwrap();
+    
+    // Test inverted pattern matching (show non-comment lines)
+    let tool = ReadTool {
+        path: "config.txt".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: None,
+        binary_check: true,
+        tail: false,
+        pattern: Some("^#".to_string()),
+        invert_match: true,
+        context_before: 0,
+        context_after: 0,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: false,
+        include_metadata: false,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Should only show non-comment lines
+    assert!(output.contains("active = true"));
+    assert!(output.contains("port = 8080"));
+    assert!(output.contains("host = localhost"));
+    assert!(!output.contains("# Comment"));
+}
+
+#[tokio::test]
+#[serial]
+async fn test_read_tool_with_metadata() {
+    let (temp_dir, context) = setup_test_env();
+    let temp_path = temp_dir.path();
+    
+    // Create test file
+    let content = "Sample content for metadata test";
+    fs::write(temp_path.join("meta.txt"), content).unwrap();
+    
+    // Test with metadata included
+    let tool = ReadTool {
+        path: "meta.txt".to_string(),
+        offset: 0,
+        limit: 0,
+        line_range: None,
+        binary_check: true,
+        tail: false,
+        pattern: None,
+        invert_match: false,
+        context_before: 0,
+        context_after: 0,
+        case: "sensitive".to_string(),
+        encoding: "utf-8".to_string(),
+        linenumbers: true,
+        follow_symlinks: true,
+        preview_only: false,
+        include_metadata: true,
+    };
+    
+    let result = tool.call_with_context(&context).await.unwrap();
+    let output = extract_text_content(&result);
+    
+    // Parse JSON response
+    let response: serde_json::Value = serde_json::from_str(&output).unwrap();
+    
+    assert!(response["content"].as_str().unwrap().contains("Sample content"));
+    assert!(response["metadata"]["size"].as_u64().unwrap() > 0);
+    assert!(response["metadata"]["lines"].as_u64().unwrap() == 1);
 }
 

@@ -48,6 +48,37 @@
 
 ### Process Tool Enhancements
 
+- Simplified and improved the process listing tool
+- Now returns structured JSON with process and port information
+- Better cross-platform support with uniform output format
+- Improved sorting and filtering capabilities
+- Added integration with kill tool workflow
+- Optimized for use in coding assistant context
+
+### Read Tool Major Enhancements
+
+- **Documentation**: Reorganized to match exemplary tools (edit, process, lsof, kill)
+  - Added comprehensive examples section with JSON examples
+  - Added detailed parameter descriptions with defaults
+  - Added Returns section documenting output format
+  - Improved organization with IMPORTANT/NOTE/HINT sections
+
+- **New Features**:
+  - **Line range syntax**: Support for "10-20" syntax in addition to offset/limit
+  - **Preview mode**: Show file metadata without reading content (`preview_only`)
+  - **Context lines**: Show lines before/after pattern matches (`context_before`, `context_after`)
+  - **Inverse matching**: Show lines NOT matching pattern (`invert_match`)
+  - **BOM detection**: Detect and report Byte Order Marks
+  - **File metadata**: Optional inclusion of size, modified time, line count (`include_metadata`)
+
+- **Improvements**:
+  - Better error messages with consistent prefixes
+  - Enhanced pattern matching with context lines
+  - Improved truncation messages with file size info
+  - More comprehensive test coverage including integration tests
+
+### Process Tool Enhancements
+
 - Enhanced documentation with comprehensive mcp_tool description
 - Added sort_by parameter supporting: name, pid, cpu, memory
 - Added user and start_time fields to process information (Unix only)
