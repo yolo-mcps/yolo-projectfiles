@@ -1,5 +1,51 @@
 # TODO
 
+## Edit Tool Major Improvements (Completed - Requires Restart)
+
+### Critical Bug Fix: replace_all Parameter
+
+- **Bug Fixed**: The `replace_all` parameter was documented but didn't actually exist!
+  - Error messages suggested using `replace_all: true` but the parameter wasn't implemented
+  - This caused extreme user confusion when trying to do bulk replacements
+
+- **New Implementation**:
+  - Added `replace_all` boolean parameter to both EditTool and EditOperation
+  - When `replace_all: true`, the tool ignores the `expected` count and replaces all occurrences
+  - Added validation to prevent using both `replace_all: true` and `expected` parameter together
+  - Better error message showing actual occurrence count as a hint
+
+- **Documentation Updates**:
+  - Updated parameter list to include replace_all
+  - Added example showing how to use replace_all for bulk replacements
+  - Fixed misleading documentation that mentioned a non-existent feature
+
+- **Improved Error Messages**:
+  - Now suggests setting `expected: N` to match actual count as an alternative
+  - Shows clearer error when parameters conflict
+  - Better guidance on how to fix issues
+
+### Testing Required After Restart:
+- [ ] Test basic replace_all functionality
+- [ ] Test error when using both replace_all and expected
+- [ ] Test that old behavior still works for backward compatibility
+- [ ] Verify improved error messages are shown
+
+## Tree Tool Improvements (Partially Complete)
+
+### Completed:
+- Enhanced documentation to match read/process tool style
+- Added comprehensive examples
+- Added JSON output format for programmatic use
+- Added max_files limit to prevent overwhelming output
+- Started adding exclude_pattern support (not finished due to edit tool not being recompiled)
+
+### Still Pending:
+- [ ] Complete exclude_pattern implementation after restart
+- [ ] Add size threshold filtering (e.g., show only files > 1MB)
+- [ ] Add date filtering (similar to find tool)
+- [ ] Test with very large directory structures for performance
+- [ ] Add more advanced filtering options
+
 ## WC Tool Improvements (Completed - Requires Restart)
 
 ### Major Enhancements to WC Tool

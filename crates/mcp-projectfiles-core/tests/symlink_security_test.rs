@@ -291,6 +291,7 @@ async fn test_edit_tool_blocks_symlink_path() {
         edits: None,
         show_diff: false,
         dry_run: false,
+        replace_all: None,
     };
     
     let result = edit_tool.call_with_context(&context).await;

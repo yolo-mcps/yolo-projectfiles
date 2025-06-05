@@ -1118,6 +1118,8 @@ async fn test_tree_tool_symlink_within_project() {
         max_depth: None,
         pattern_filter: None,
         follow_symlinks: true,
+        output_format: None,
+        max_files: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1152,6 +1154,8 @@ async fn test_tree_tool_symlink_outside_project_with_follow() {
         max_depth: None,
         pattern_filter: None,
         follow_symlinks: true,
+        output_format: None,
+        max_files: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
@@ -1183,6 +1187,8 @@ async fn test_tree_tool_symlink_outside_project_no_follow() {
         max_depth: None,
         pattern_filter: None,
         follow_symlinks: false,
+        output_format: None,
+        max_files: None,
     };
     
     let result = tool.call_with_context(&context).await;
@@ -1216,6 +1222,8 @@ async fn test_tree_tool_showing_symlinks_in_structure() {
         max_depth: Some(2),
         pattern_filter: None,
         follow_symlinks: true,
+        output_format: None,
+        max_files: None,
     };
     
     let result = tool.call_with_context(&context).await.unwrap();
